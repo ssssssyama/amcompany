@@ -5,13 +5,40 @@ Stable Audio Open を使って、VRChatアバター用の足音効果音をロ�
 ## 必要環境
 
 - Python 3.9+
-- CUDA対応GPU（VRAM 8GB以上推奨）
+- GPU（VRAM 8GB以上推奨）
+  - **NVIDIA**: CUDA対応GPU
+  - **AMD**: ROCm 6.1+ 対応GPU（RX 7900 XTX等）
 - ディスク容量: モデル約3.5GB
 
 ## セットアップ
 
+### NVIDIA GPU
+
 ```bash
 pip install -r requirements-footstep.txt
+```
+
+### AMD GPU (ROCm)
+
+ROCm版PyTorchを先にインストールしてから、残りの依存パッケージを入れます。
+
+```bash
+# 1. ROCm版PyTorchをインストール
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/rocm6.1
+
+# 2. 残りの依存パッケージ
+pip install einops stable-audio-tools
+```
+
+#### Windows の場合（WSL2経由）
+
+AMD GPUのROCmはLinuxのみ対応です。Windowsでは WSL2 を使います。
+
+```bash
+# WSL2 + Ubuntu 22.04 で以下を実行
+export HSA_OVERRIDE_GFX_VERSION=11.0.0  # RX 7900 XTX の場合
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/rocm6.1
+pip install einops stable-audio-tools
 ```
 
 初回実行時にモデルが自動ダウンロードされます（Hugging Faceアカウントが必要な場合があります）。
@@ -36,6 +63,9 @@ python tools/footstep-generator/generate.py --output ./my_sounds
 
 # 利用可能なサーフェス一覧
 python tools/footstep-generator/generate.py --list-surfaces
+
+# AMD GPUで精度問題が出る場合はfp32を明示指定
+python tools/footstep-generator/generate.py --precision fp32
 ```
 
 ## サポートするサーフェス

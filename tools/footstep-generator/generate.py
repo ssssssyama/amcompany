@@ -2,7 +2,7 @@
 足音AI生成ツール — Stable Audio Open を使った足音効果音ジェネレーター
 
 VRChat アバター用の足音ギミックに使える効果音を AI でローカル生成します。
-GPU（CUDA対応）が必要です。初回実行時にモデル（約3.5GB）を自動ダウンロードします。
+GPU（NVIDIA CUDA / AMD ROCm 対応）が必要です。初回実行時にモデル（約3.5GB）を自動ダウンロードします。
 
 使い方:
   python generate.py                    # 全サーフェスの足音を生成
@@ -70,6 +70,21 @@ SURFACE_PROMPTS = {
 }
 
 
+def detect_gpu() -> dict:
+    """GPUの種類を検出して情報を返す"""
+    info = {"available": False, "name": "", "is_amd": False}
+    if torch.cuda.is_available():
+        info["available"] = True
+        try:
+            info["name"] = torch.cuda.get_device_name(0)
+            info["is_amd"] = any(
+                kw in info["name"].lower() for kw in ("amd", "radeon", "gfx")
+            )
+        except Exception:
+            info["name"] = "不明なGPU"
+    return info
+
+
 def load_model(device: str = "cuda"):
     """Stable Audio Open モデルを読み込む"""
     print("モデルを読み込み中... (初回はダウンロードに数分かかります)")
@@ -86,6 +101,7 @@ def generate_footstep(
     duration: float = 0.5,
     seed: int = -1,
     device: str = "cuda",
+    force_fp32: bool = False,
 ) -> torch.Tensor:
     """1つの足音を生成する"""
     sample_rate = model_config["sample_rate"]
@@ -102,7 +118,10 @@ def generate_footstep(
         }
     ]
 
-    with torch.no_grad():
+    # AMD GPUではfp16でNaNが出る場合があるためfp32を強制
+    ctx = torch.autocast(device_type="cuda", dtype=torch.float32) if force_fp32 else torch.no_grad()
+
+    with torch.no_grad(), ctx:
         output = generate_diffusion_cond(
             model,
             steps=100,
@@ -148,6 +167,7 @@ def generate_all(
     duration: float = 0.5,
     output_dir: str = "./output",
     device: str = "cuda",
+    force_fp32: bool = False,
 ):
     """全サーフェスの足音を一括生成"""
     output_path = Path(output_dir)
@@ -179,7 +199,8 @@ def generate_all(
             print(f"[{current}/{total}] {info['name_ja']} ({surface}) - バリエーション {i + 1}")
 
             audio, sr = generate_footstep(
-                model, model_config, info["prompt"], duration=duration, device=device
+                model, model_config, info["prompt"],
+                duration=duration, device=device, force_fp32=force_fp32,
             )
 
             # 無音トリミング
@@ -236,7 +257,14 @@ def main():
         type=str,
         default="cuda",
         choices=["cuda", "cpu"],
-        help="使用デバイス (デフォルト: cuda)",
+        help="使用デバイス (デフォルト: cuda)。NVIDIA/AMD両方 'cuda' で動作",
+    )
+    parser.add_argument(
+        "--precision",
+        type=str,
+        default="auto",
+        choices=["auto", "fp32", "fp16"],
+        help="演算精度 (デフォルト: auto)。AMD GPUではauto時にfp32を使用",
     )
     parser.add_argument(
         "--list-surfaces",
@@ -252,9 +280,26 @@ def main():
             print(f"  {key:10s} — {info['name_ja']}")
         return
 
-    if args.device == "cuda" and not torch.cuda.is_available():
-        print("警告: CUDAが利用できません。CPUモードで実行します（非常に遅くなります）")
-        args.device = "cpu"
+    # GPU検出
+    if args.device == "cuda":
+        gpu_info = detect_gpu()
+        if not gpu_info["available"]:
+            print("警告: GPUが利用できません。CPUモードで実行します（非常に遅くなります）")
+            args.device = "cpu"
+        else:
+            print(f"検出されたGPU: {gpu_info['name']}")
+            if gpu_info["is_amd"]:
+                print("AMD GPUを検出しました（ROCm経由）")
+
+    # precision決定
+    force_fp32 = False
+    if args.precision == "fp32":
+        force_fp32 = True
+    elif args.precision == "auto" and args.device == "cuda":
+        gpu_info = detect_gpu()
+        if gpu_info["is_amd"]:
+            print("AMD GPU: NaN防止のためfp32モードを使用します")
+            force_fp32 = True
 
     generate_all(
         surfaces=args.surfaces,
@@ -262,6 +307,7 @@ def main():
         duration=args.duration,
         output_dir=args.output,
         device=args.device,
+        force_fp32=force_fp32,
     )
 
 
