@@ -77,6 +77,22 @@ GameObjectをD&Dするだけで Expression Menu / Parameter / Animator / Animati
 
 ---
 
+## Unity Editor拡張 + AI連携
+
+### 14. 足音ギミック自動セットアップ＋AI音源生成（500円）
+
+VRChatアバターに足音ギミックをワンクリック導入。AI（Stable Audio Open）でローカル生成した足音を使用。
+
+- **AI足音生成**: 10種類のサーフェス（木・石・草・金属・砂利・雪・水・カーペット・砂・タイル）
+- **ローカル完結**: GPU上でAI生成、クラウドAPI不要・完全無料
+- **Unity連携**: 生成したwavをそのままアバターに組み込み
+- **Animator/Contact自動生成**: 足元のContactReceiver + Animator遷移を自動セットアップ
+- **複数バリエーション**: 各サーフェス3〜5種類のランダム再生で自然な足音
+
+**ツール**: `tools/footstep-generator/` — Stable Audio Open ベースのPython足音生成スクリプト
+
+---
+
 ## 3Dモデル系商品（並行展開）
 
 ### 11. リアクション吹き出しセット（200円）

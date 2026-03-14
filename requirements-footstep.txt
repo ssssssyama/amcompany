@@ -1,0 +1,6 @@
+# 足音AI生成ツール用の依存パッケージ
+# GPU (CUDA) 環境が必要です
+torch>=2.1.0
+torchaudio>=2.1.0
+einops>=0.7.0
+stable-audio-tools>=0.0.12
