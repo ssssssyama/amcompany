@@ -1,0 +1,35 @@
+output_dir: ./output
+catalog_path: ./output/catalog.jsonl
+
+agents:
+  audio_pack:
+    enabled: true
+    interval: 3600
+    params:
+      themes: ["horror", "scifi", "fantasy", "nature", "urban"]
+      surfaces: ["wood", "stone", "grass", "metal", "gravel", "snow", "water", "carpet", "sand", "tile"]
+      variations_per_combo: 10
+      quality_threshold: 0.7
+
+  image_variants:
+    enabled: true
+    interval: 1800
+    params:
+      source_dir: ./assets/base_images
+      styles: ["anime", "realistic"]
+      scale: 4
+      max_per_cycle: 20
+
+  listing_writer:
+    enabled: true
+    interval: 7200
+    params:
+      languages: ["ja", "en"]
+      platforms: ["booth", "gumroad"]
+
+  seo_content:
+    enabled: false
+    interval: 14400
+    params:
+      topics: []
+      target_word_count: 1500

@@ -1,0 +1,26 @@
+[project]
+name = "asset-accumulation-agent"
+version = "0.1.0"
+description = "24時間エージェントで換金性のある資産を蓄積するフレームワーク"
+requires-python = ">=3.10"
+dependencies = [
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+audio = [
+    "torch>=2.1.0",
+    "torchaudio>=2.1.0",
+    "einops>=0.7.0",
+    "stable-audio-tools",
+]
+image = [
+    "Pillow>=10.0.0",
+    "realesrgan>=0.3.0",
+]
+dev = [
+    "pytest>=7.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
