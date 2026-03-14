@@ -13,9 +13,9 @@ GPU（NVIDIA CUDA / AMD ROCm 対応）が必要です。初回実行時にモデ
 """
 
 import argparse
+import json
 import os
 import sys
-import json
 from pathlib import Path
 
 import torch
@@ -23,6 +23,10 @@ import torchaudio
 from einops import rearrange
 from stable_audio_tools import get_pretrained_model
 from stable_audio_tools.inference.generation import generate_diffusion_cond
+
+# 共通GPU検出ユーティリティ
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from common.gpu_utils import detect_gpu, resolve_device
 
 
 # サーフェス別プロンプト定義
@@ -68,21 +72,6 @@ SURFACE_PROMPTS = {
         "prompt": "single footstep on ceramic tile floor, indoor, sharp, close-up, foley",
     },
 }
-
-
-def detect_gpu() -> dict:
-    """GPUの種類を検出して情報を返す"""
-    info = {"available": False, "name": "", "is_amd": False}
-    if torch.cuda.is_available():
-        info["available"] = True
-        try:
-            info["name"] = torch.cuda.get_device_name(0)
-            info["is_amd"] = any(
-                kw in info["name"].lower() for kw in ("amd", "radeon", "gfx")
-            )
-        except Exception:
-            info["name"] = "不明なGPU"
-    return info
 
 
 def load_model(device: str = "cuda"):
@@ -281,25 +270,15 @@ def main():
         return
 
     # GPU検出
-    if args.device == "cuda":
-        gpu_info = detect_gpu()
-        if not gpu_info["available"]:
-            print("警告: GPUが利用できません。CPUモードで実行します（非常に遅くなります）")
-            args.device = "cpu"
-        else:
-            print(f"検出されたGPU: {gpu_info['name']}")
-            if gpu_info["is_amd"]:
-                print("AMD GPUを検出しました（ROCm経由）")
+    args.device, gpu_info = resolve_device(args.device)
 
     # precision決定
     force_fp32 = False
     if args.precision == "fp32":
         force_fp32 = True
-    elif args.precision == "auto" and args.device == "cuda":
-        gpu_info = detect_gpu()
-        if gpu_info["is_amd"]:
-            print("AMD GPU: NaN防止のためfp32モードを使用します")
-            force_fp32 = True
+    elif args.precision == "auto" and gpu_info["is_amd"]:
+        print("AMD GPU: NaN防止のためfp32モードを使用します")
+        force_fp32 = True
 
     generate_all(
         surfaces=args.surfaces,

@@ -91,6 +91,19 @@ VRChatアバターに足音ギミックをワンクリック導入。AI（Stable
 
 **ツール**: `tools/footstep-generator/` — Stable Audio Open ベースのPython足音生成スクリプト
 
+### 15. テクスチャ高画質化ツール（400円）
+
+VRChatアバターの低解像度テクスチャをAI（Real-ESRGAN）でアップスケール。
+
+- **4倍アップスケール**: 512px→2048px、1024px→4096px
+- **アニメ調モデル搭載**: VRChatアバターに最適な `x4plus-anime` をデフォルト採用
+- **バッチ処理**: フォルダ指定で一括変換
+- **法線マップモード**: アップスケール後にベクトル正規化
+- **軽量**: VRAM 2-4GBで動作、RX 7900 XTXなら大量バッチも快適
+- **ライセンス**: BSD-3-Clause、商用利用・再配布OK
+
+**ツール**: `tools/texture-upscaler/` — Real-ESRGAN ベースのPythonアップスケールスクリプト
+
 ---
 
 ## 3Dモデル系商品（並行展開）
