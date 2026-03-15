@@ -2,7 +2,26 @@
 
 テスト仕様書（Excel）を読み取り、ブラウザ操作を自動実行し、スクリーンショット＋検証結果をExcelにエビデンスとして貼り付けるツール。
 
-## 機能
+## エディション
+
+| | Lite版（VBA） | Pro版（Docker） |
+|---|---|---|
+| **価格** | 無料 | 導入支援費 + 年間保守 |
+| **操作種別** | 5種 | 13種（全対応） |
+| **検証種別** | 3種 | 7種 + 部分一致/正規表現 |
+| **DB検証** | - | A5M2連携 |
+| **複数シート** | - | 対応 |
+| **NG時制御** | - | abort/continue |
+| **Excel列カスタマイズ** | - | YAML設定で自由に変更 |
+| **変数置換** | - | `${変数名}` 対応 |
+| **認証自動化** | - | form/basic/cookie |
+| **インストール** | Selenium Basic のみ | Docker |
+| **配布** | Excelファイル | Dockerイメージ |
+
+- **Lite版**: [vba-lite/](vba-lite/) — Excelマクロだけで動作。現場への持ち込みが容易
+- **Pro版**: [docker/](docker/) — 全機能対応。顧客環境のDockerにデプロイ
+
+## 機能（Pro版）
 
 - **Excel仕様書読み取り**: テスト手順・期待値をExcelから自動取得（フォーマット可変対応）
 - **ブラウザ自動操作**: Playwrightで画面遷移・入力・クリック等を実行（13種の操作に対応）
@@ -17,10 +36,25 @@
 
 ## セットアップ
 
+### Pro版（Docker）
+
+```bash
+cd docker
+docker compose build
+# テスト仕様書と設定ファイルを docker/work/ に配置
+docker compose run test-evidence テスト仕様書.xlsx -c config.yaml
+```
+
+### Pro版（直接実行）
+
 ```bash
 pip install -r requirements.txt
 playwright install chromium
 ```
+
+### Lite版（VBA）
+
+[vba-lite/setup.md](vba-lite/setup.md) を参照。
 
 ## 使い方
 

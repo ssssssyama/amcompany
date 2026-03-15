@@ -1,0 +1,11 @@
+services:
+  test-evidence:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    volumes:
+      # テスト仕様書・設定ファイル・出力先をマウント
+      - ./work:/work
+    # デフォルト: ヘッドレスで実行
+    # 引数はコマンドラインで上書き可能
+    # 例: docker compose run test-evidence テスト仕様書.xlsx -c config.yaml
