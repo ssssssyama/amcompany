@@ -5,9 +5,12 @@ Excel仕様書を読み取り、Playwrightでブラウザ操作を実行し、
 """
 
 import asyncio
+import csv
 import io
 import shutil
+import subprocess
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -148,20 +151,56 @@ async def verify_screen(page, step: TestStep) -> tuple[bool, str]:
     return True, ""
 
 
-def verify_db(step: TestStep, db_engine) -> tuple[bool, str]:
-    """DBに接続してクエリ結果を検証する."""
-    if db_engine is None:
-        return False, "DB接続が設定されていません"
+def verify_db_a5m2(step: TestStep, a5m2_cmd: str, a5m2_connect: str) -> tuple[bool, str]:
+    """A5M2cmd経由でSQLを実行し、CSV出力された結果を検証する.
 
-    from sqlalchemy import text
+    A5:SQL Mk-2 のコマンドラインユーティリティを使用してDBに接続し、
+    SQLクエリの結果を期待値と照合する。
+    """
+    if not a5m2_cmd:
+        return False, "A5M2cmdのパスが設定されていません"
 
-    with db_engine.connect() as conn:
-        result = conn.execute(text(step.verify_target))
-        row = result.fetchone()
-        if row is None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # 検証用SQLを一時ファイルに書き出し
+        sql_path = Path(tmpdir) / "query.sql"
+        sql_path.write_text(step.verify_target, encoding="utf-8")
+
+        # A5M2cmdでSQL実行
+        cmd = [
+            a5m2_cmd,
+            f"/Connect={a5m2_connect}",
+            "/RunSQL",
+            f"/FileName={sql_path}",
+            f"/OutputPath={tmpdir}",
+        ]
+
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=30,
+                encoding="utf-8",
+            )
+        except FileNotFoundError:
+            return False, f"A5M2cmdが見つかりません: {a5m2_cmd}"
+        except subprocess.TimeoutExpired:
+            return False, "A5M2cmd: タイムアウト（30秒）"
+
+        if result.returncode != 0:
+            return False, f"A5M2cmdエラー: {result.stderr.strip()}"
+
+        # 出力CSV（Query-1.csv）を読み取り
+        csv_path = Path(tmpdir) / "Query-1.csv"
+        if not csv_path.exists():
+            return False, "A5M2cmd: クエリ結果のCSVが出力されませんでした"
+
+        with open(csv_path, encoding="utf-8-sig", newline="") as f:
+            reader = csv.reader(f)
+            header = next(reader, None)
+            first_row = next(reader, None)
+
+        if first_row is None:
             actual = "NULL"
         else:
-            actual = str(row[0])
+            actual = first_row[0]
 
     if actual == step.expected:
         return True, f"OK: DB結果='{actual}'"
@@ -214,13 +253,16 @@ def write_result(ws, step: TestStep, passed: bool | None, message: str,
 
 
 async def run_tests(spec_path: str, output_path: str | None = None,
-                    db_url: str | None = None, headless: bool = True):
+                    a5m2_cmd: str | None = None,
+                    a5m2_connect: str | None = None,
+                    headless: bool = True):
     """テスト仕様書を実行してエビデンスを生成する.
 
     Args:
         spec_path: テスト仕様書Excelのパス
         output_path: エビデンス出力先Excelのパス（省略時は元ファイルに _evidence を付与）
-        db_url: DB接続URL（例: postgresql://user:pass@localhost/dbname）
+        a5m2_cmd: A5M2cmd.exe のパス（DB検証に使用）
+        a5m2_connect: A5M2の接続文字列（DB検証に使用）
         headless: ヘッドレスモードで実行するか
     """
     spec_path = Path(spec_path)
@@ -248,12 +290,9 @@ async def run_tests(spec_path: str, output_path: str | None = None,
     screenshot_dir = output_path.parent / "screenshots"
     screenshot_dir.mkdir(exist_ok=True)
 
-    # DB接続（オプション）
-    db_engine = None
-    if db_url:
-        from sqlalchemy import create_engine
-        db_engine = create_engine(db_url)
-        print(f"DB接続: {db_url}")
+    # A5M2 DB検証設定（オプション）
+    if a5m2_cmd and a5m2_connect:
+        print(f"DB検証: A5M2cmd ({a5m2_cmd})")
 
     # ブラウザ起動
     async with async_playwright() as p:
@@ -284,7 +323,9 @@ async def run_tests(spec_path: str, output_path: str | None = None,
 
                 # 検証
                 if step.verify_type == "db":
-                    passed, message = verify_db(step, db_engine)
+                    passed, message = verify_db_a5m2(
+                        step, a5m2_cmd or "", a5m2_connect or ""
+                    )
                 elif step.verify_type:
                     passed, message = await verify_screen(page, step)
                 else:
@@ -329,14 +370,22 @@ def main():
     )
     parser.add_argument("spec", help="テスト仕様書Excelファイルのパス")
     parser.add_argument("-o", "--output", help="エビデンス出力先のパス")
-    parser.add_argument("--db-url", help="DB接続URL (例: postgresql://user:pass@host/db)")
+    parser.add_argument(
+        "--a5m2-cmd", default="A5M2cmd.exe",
+        help="A5M2cmd.exe のパス (デフォルト: A5M2cmd.exe)",
+    )
+    parser.add_argument(
+        "--a5m2-connect",
+        help="A5M2の接続文字列 (例: __ConnectionType=Internal;ProviderName=MySQL;...)",
+    )
     parser.add_argument("--headed", action="store_true", help="ブラウザを表示して実行")
 
     args = parser.parse_args()
     asyncio.run(run_tests(
         spec_path=args.spec,
         output_path=args.output,
-        db_url=args.db_url,
+        a5m2_cmd=args.a5m2_cmd,
+        a5m2_connect=args.a5m2_connect,
         headless=not args.headed,
     ))
 

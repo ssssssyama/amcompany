@@ -1,4 +1,3 @@
 playwright
 openpyxl
-sqlalchemy
 Pillow

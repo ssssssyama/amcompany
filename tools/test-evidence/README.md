@@ -8,7 +8,7 @@
 - **ブラウザ自動操作**: Playwrightで画面遷移・入力・クリック等を実行
 - **スクリーンショット**: 各ステップの画面キャプチャを自動取得
 - **画面検証**: テキスト・値・表示状態・URLの自動検証（OK/NG判定）
-- **DB検証**: SQLクエリの結果が期待値と一致するか確認
+- **DB検証（A5M2連携）**: A5:SQL Mk-2 経由でSQLクエリを実行し、結果が期待値と一致するか確認
 - **エビデンス生成**: スクショ+OK/NG判定を元のExcelに自動貼付して出力
 
 ## セットアップ
@@ -53,8 +53,10 @@ python evidence_runner.py テスト仕様書.xlsx --headed
 # 出力先を指定
 python evidence_runner.py テスト仕様書.xlsx -o エビデンス.xlsx
 
-# DB検証あり
-python evidence_runner.py テスト仕様書.xlsx --db-url postgresql://user:pass@localhost/mydb
+# DB検証あり（A5M2連携）
+python evidence_runner.py テスト仕様書.xlsx \
+  --a5m2-cmd "C:\A5M2\A5M2cmd.exe" \
+  --a5m2-connect "__ConnectionType=Internal;ProviderName=MySQL;UserName=user;Password=pass;ServerName=localhost;Port=3306;Database=mydb"
 ```
 
 ### 4. 結果確認
@@ -83,4 +85,33 @@ python evidence_runner.py テスト仕様書.xlsx --db-url postgresql://user:pas
 | `value` | 要素のvalue属性が期待値と一致するか |
 | `visible` | 要素が表示されているか |
 | `url` | URLが期待値と一致するか |
-| `db` | SQLクエリ結果が期待値と一致するか |
+| `db` | A5M2cmd経由でSQLクエリを実行し、結果が期待値と一致するか |
+
+## DB検証（A5M2連携）
+
+DB検証には [A5:SQL Mk-2](https://a5m2.mmatsubara.com/) のコマンドラインユーティリティ（A5M2cmd）を使用します。
+
+### 前提条件
+
+- A5:SQL Mk-2 がインストール済みであること
+- A5M2cmd.exe にパスが通っている、またはフルパスを指定すること
+
+### 接続文字列の例
+
+```
+# MySQL
+__ConnectionType=Internal;ProviderName=MySQL;UserName=user;Password=pass;ServerName=localhost;Port=3306;Database=mydb
+
+# PostgreSQL
+__ConnectionType=Internal;ProviderName=PostgreSQL;UserName=user;Password=pass;ServerName=localhost;Port=5432;Database=mydb
+
+# SQL Server
+__ConnectionType=Internal;ProviderName=MSSQL;UserName=user;Password=pass;ServerName=localhost;Database=mydb
+```
+
+### 動作の仕組み
+
+1. テスト仕様書の「検証対象」列に書かれたSQLを一時ファイルに書き出し
+2. `A5M2cmd.exe /Connect=... /RunSQL /FileName=...` で実行
+3. 出力されたCSV（Query-1.csv）を読み取り
+4. 1行目の1列目の値を「期待値」列と照合してOK/NG判定
