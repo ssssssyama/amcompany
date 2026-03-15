@@ -28,7 +28,27 @@ python create_template.py
 
 `examples/test_spec_template.xlsx` にサンプル付きテンプレートが生成されます。
 
-### 2. テスト仕様書を記入
+### 2. プロジェクト設定ファイルを作成
+
+プロジェクトごとにYAML設定ファイルを作成し、環境情報・認証・ブラウザ設定を定義します。
+
+```bash
+cp examples/project_config.yaml my_project.yaml
+```
+
+設定ファイルで定義した変数は、Excel仕様書内で `${変数名}` として参照できます。
+
+```yaml
+environment:
+  base_url: "https://staging.example.com"
+  variables:
+    admin_user: "admin@example.com"
+    admin_pass: "P@ssw0rd123"
+```
+
+例えば仕様書のURL列に `${base_url}/login` と書けば、実行時に `https://staging.example.com/login` に自動置換されます。環境ごとに設定ファイルを切り替えるだけで、同じ仕様書を使い回せます。
+
+### 3. テスト仕様書を記入
 
 テンプレートに従って操作手順・検証内容を記入します。
 
@@ -36,35 +56,109 @@ python create_template.py
 |---|---|---|
 | 操作種別 | navigate / click / input / select / wait | `click` |
 | 対象セレクタ | CSSセレクタ | `#login-button` |
-| 入力値/期待値 | 操作に応じた値 | `testuser` |
+| 入力値/期待値 | 操作に応じた値（`${変数名}` 使用可） | `${test_user}` |
 | 検証種別 | screenshot / text / value / visible / url / db | `text` |
-| 検証対象 | セレクタ or SQLクエリ | `.welcome-msg` |
-| 期待値 | 検証の期待値 | `ようこそ` |
+| 検証対象 | セレクタ or SQLクエリ（`${変数名}` 使用可） | `.welcome-msg` |
+| 期待値 | 検証の期待値（`${変数名}` 使用可） | `ようこそ` |
 
-### 3. テスト実行
+### 4. テスト実行
 
 ```bash
-# 基本実行（ヘッドレス）
-python evidence_runner.py テスト仕様書.xlsx
+# 設定ファイルを指定して実行（推奨）
+python evidence_runner.py テスト仕様書.xlsx -c my_project.yaml
 
 # ブラウザ表示して実行
-python evidence_runner.py テスト仕様書.xlsx --headed
+python evidence_runner.py テスト仕様書.xlsx -c my_project.yaml --headed
 
 # 出力先を指定
-python evidence_runner.py テスト仕様書.xlsx -o エビデンス.xlsx
+python evidence_runner.py テスト仕様書.xlsx -c my_project.yaml -o エビデンス.xlsx
 
-# DB検証あり（A5M2連携）
-python evidence_runner.py テスト仕様書.xlsx \
+# 設定ファイルなしでも実行可能（従来通り）
+python evidence_runner.py テスト仕様書.xlsx
+
+# CLI引数でA5M2設定を上書き（設定ファイルより優先）
+python evidence_runner.py テスト仕様書.xlsx -c my_project.yaml \
   --a5m2-cmd "C:\A5M2\A5M2cmd.exe" \
-  --a5m2-connect "__ConnectionType=Internal;ProviderName=MySQL;UserName=user;Password=pass;ServerName=localhost;Port=3306;Database=mydb"
+  --a5m2-connect "接続文字列"
 ```
 
-### 4. 結果確認
+### 5. 結果確認
 
 `テスト仕様書_evidence.xlsx` にエビデンスが自動生成されます:
 - 各ステップのスクリーンショットがエビデンス列に貼付
 - OK/NG判定が結果列に記入（色付き）
 - 検証詳細が備考欄に追記
+
+## プロジェクト設定ファイル
+
+YAML形式の設定ファイルで、各社プロダクト固有の設定を管理します。サンプル: `examples/project_config.yaml`
+
+### 設定項目
+
+| セクション | 項目 | 説明 |
+|---|---|---|
+| `environment.base_url` | ベースURL | `${base_url}` で参照可能 |
+| `environment.variables` | カスタム変数 | `${変数名}` で仕様書内から参照 |
+| `auth.type` | 認証方式 | `none` / `basic` / `form` / `cookie` |
+| `auth.fields` | フォーム認証の入力フィールド | セレクタと値のペア |
+| `browser.viewport` | ビューポートサイズ | width / height |
+| `browser.timeout` | 操作タイムアウト（ms） | デフォルト: 30000 |
+| `browser.ignore_https_errors` | 証明書エラー無視 | 自己署名証明書の環境用 |
+| `a5m2.cmd` | A5M2cmd.exe パス | DB検証用 |
+| `a5m2.connect` | A5M2接続文字列 | DB検証用 |
+
+### 認証方式
+
+**フォーム認証**（ログインフォームに自動入力）:
+```yaml
+auth:
+  type: form
+  login_url: "${base_url}/login"
+  fields:
+    - selector: "#username"
+      value: "${admin_user}"
+    - selector: "#password"
+      value: "${admin_pass}"
+  submit_selector: "#login-button"
+```
+
+**Basic認証**:
+```yaml
+auth:
+  type: basic
+  username: "admin"
+  password: "secret"
+```
+
+**Cookie認証**（事前定義のCookieを設定）:
+```yaml
+auth:
+  type: cookie
+  cookies:
+    - name: "session_id"
+      value: "abc123"
+      domain: ".example.com"
+      path: "/"
+```
+
+### 環境の切り替え
+
+同じ仕様書を複数環境で使い回す場合、設定ファイルを環境ごとに作成します:
+
+```
+config/
+  dev.yaml        # 開発環境
+  staging.yaml    # ステージング環境
+  production.yaml # 本番環境（読み取り専用テスト用）
+```
+
+```bash
+# 開発環境でテスト
+python evidence_runner.py テスト仕様書.xlsx -c config/dev.yaml
+
+# ステージング環境でテスト
+python evidence_runner.py テスト仕様書.xlsx -c config/staging.yaml
+```
 
 ## 対応する操作種別
 

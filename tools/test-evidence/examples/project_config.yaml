@@ -1,0 +1,56 @@
+# プロジェクト設定ファイル
+# テスト仕様書(Excel)内の ${変数名} はこのファイルの値で自動置換されます。
+
+# --- 環境設定 ---
+environment:
+  # テスト対象アプリのベースURL（${base_url} で参照可能）
+  base_url: "https://staging.example.com"
+
+  # カスタム変数（${変数名} で仕様書内から参照可能）
+  variables:
+    admin_user: "admin@example.com"
+    admin_pass: "P@ssw0rd123"
+    test_user: "testuser"
+    test_pass: "password123"
+    api_base: "https://api.staging.example.com"
+
+# --- 認証設定 ---
+# type: none / basic / form / cookie
+auth:
+  type: form
+  login_url: "${base_url}/login"
+  fields:
+    - selector: "#username"
+      value: "${admin_user}"
+    - selector: "#password"
+      value: "${admin_pass}"
+  submit_selector: "#login-button"
+
+# --- Basic認証の場合 ---
+# auth:
+#   type: basic
+#   username: "admin"
+#   password: "secret"
+
+# --- Cookie認証の場合 ---
+# auth:
+#   type: cookie
+#   cookies:
+#     - name: "session_id"
+#       value: "abc123"
+#       domain: ".example.com"
+#       path: "/"
+
+# --- ブラウザ設定 ---
+browser:
+  viewport:
+    width: 1280
+    height: 720
+  locale: "ja-JP"
+  timeout: 30000           # 操作タイムアウト（ミリ秒）
+  ignore_https_errors: false  # オレオレ証明書の環境ではtrueに
+
+# --- A5M2 DB検証設定（オプション） ---
+# a5m2:
+#   cmd: "C:\\A5M2\\A5M2cmd.exe"
+#   connect: "__ConnectionType=Internal;ProviderName=MySQL;UserName=user;Password=pass;ServerName=localhost;Port=3306;Database=mydb"

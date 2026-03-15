@@ -20,6 +20,8 @@ from openpyxl.styles import Font, PatternFill
 from PIL import Image as PILImage
 from playwright.async_api import async_playwright
 
+from project_config import ProjectConfig
+
 # 定数
 HEADER_ROW = 6
 DATA_START_ROW = 7
@@ -63,8 +65,13 @@ class TestStep:
         self.note = note or ""
 
 
-def read_test_steps(ws) -> list[TestStep]:
-    """テスト仕様書シートからテストステップを読み取る."""
+def read_test_steps(ws, config: ProjectConfig | None = None) -> list[TestStep]:
+    """テスト仕様書シートからテストステップを読み取る.
+
+    config が指定されている場合、セレクタ・入力値・期待値等の
+    ${変数名} を設定ファイルの値で置換する。
+    """
+    resolve = config.resolve if config else (lambda x: x)
     steps = []
     for row in range(DATA_START_ROW, ws.max_row + 1):
         no = ws[f"{COL_NO}{row}"].value
@@ -75,11 +82,11 @@ def read_test_steps(ws) -> list[TestStep]:
             no=no,
             item=ws[f"{COL_ITEM}{row}"].value,
             action=ws[f"{COL_ACTION}{row}"].value,
-            selector=ws[f"{COL_SELECTOR}{row}"].value,
-            input_val=ws[f"{COL_INPUT}{row}"].value,
+            selector=resolve(ws[f"{COL_SELECTOR}{row}"].value or ""),
+            input_val=resolve(str(ws[f"{COL_INPUT}{row}"].value) if ws[f"{COL_INPUT}{row}"].value is not None else ""),
             verify_type=ws[f"{COL_VERIFY_TYPE}{row}"].value,
-            verify_target=ws[f"{COL_VERIFY_TARGET}{row}"].value,
-            expected=ws[f"{COL_EXPECTED}{row}"].value,
+            verify_target=resolve(ws[f"{COL_VERIFY_TARGET}{row}"].value or ""),
+            expected=resolve(str(ws[f"{COL_EXPECTED}{row}"].value) if ws[f"{COL_EXPECTED}{row}"].value is not None else ""),
             note=ws[f"{COL_NOTE}{row}"].value,
         )
         steps.append(step)
@@ -252,7 +259,40 @@ def write_result(ws, step: TestStep, passed: bool | None, message: str,
         ws.row_dimensions[step.row].height = EVIDENCE_IMG_HEIGHT * 0.75
 
 
+async def authenticate(page, config: ProjectConfig):
+    """設定ファイルの認証情報に基づいてログイン処理を行う."""
+    auth = config.auth
+    auth_type = config.auth_type
+
+    if auth_type == "form":
+        # フォーム認証: ログインページに遷移して入力・送信
+        login_url = config.resolve(auth.get("login_url", ""))
+        if login_url:
+            await page.goto(login_url, wait_until="networkidle")
+        for field in auth.get("fields", []):
+            selector = field.get("selector", "")
+            value = config.resolve(field.get("value", ""))
+            await page.fill(selector, value)
+        submit = auth.get("submit_selector", "")
+        if submit:
+            await page.click(submit)
+            await page.wait_for_load_state("networkidle")
+        print(f"  認証完了 (form)")
+
+    elif auth_type == "basic":
+        # Basic認証: Playwrightのコンテキスト認証を使用
+        # （context作成時にhttp_credentialsで設定済み）
+        print(f"  認証設定済み (basic)")
+
+    elif auth_type == "cookie":
+        # Cookie認証: 事前定義のCookieを設定
+        for cookie in auth.get("cookies", []):
+            await page.context.add_cookies([cookie])
+        print(f"  認証完了 (cookie: {len(auth.get('cookies', []))}件)")
+
+
 async def run_tests(spec_path: str, output_path: str | None = None,
+                    config_path: str | None = None,
                     a5m2_cmd: str | None = None,
                     a5m2_connect: str | None = None,
                     headless: bool = True):
@@ -261,10 +301,14 @@ async def run_tests(spec_path: str, output_path: str | None = None,
     Args:
         spec_path: テスト仕様書Excelのパス
         output_path: エビデンス出力先Excelのパス（省略時は元ファイルに _evidence を付与）
-        a5m2_cmd: A5M2cmd.exe のパス（DB検証に使用）
-        a5m2_connect: A5M2の接続文字列（DB検証に使用）
+        config_path: プロジェクト設定ファイル（YAML）のパス
+        a5m2_cmd: A5M2cmd.exe のパス（DB検証に使用。設定ファイルより優先）
+        a5m2_connect: A5M2の接続文字列（DB検証に使用。設定ファイルより優先）
         headless: ヘッドレスモードで実行するか
     """
+    # プロジェクト設定を読み込み
+    config = ProjectConfig(config_path)
+
     spec_path = Path(spec_path)
     if output_path is None:
         output_path = spec_path.parent / f"{spec_path.stem}_evidence{spec_path.suffix}"
@@ -278,30 +322,50 @@ async def run_tests(spec_path: str, output_path: str | None = None,
     # テスト日を記入
     ws["B3"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # テストステップを読み取り
-    steps = read_test_steps(ws)
+    # テストステップを読み取り（変数置換あり）
+    steps = read_test_steps(ws, config)
     if not steps:
         print("テストステップが見つかりません。")
         return
 
     print(f"テスト仕様書を読み込みました: {len(steps)} ステップ")
+    if config_path:
+        print(f"プロジェクト設定: {config_path}")
 
     # スクリーンショット保存ディレクトリ
     screenshot_dir = output_path.parent / "screenshots"
     screenshot_dir.mkdir(exist_ok=True)
 
-    # A5M2 DB検証設定（オプション）
-    if a5m2_cmd and a5m2_connect:
-        print(f"DB検証: A5M2cmd ({a5m2_cmd})")
+    # A5M2設定: CLI引数 > 設定ファイル の優先順位
+    effective_a5m2_cmd = a5m2_cmd or config.a5m2_cmd
+    effective_a5m2_connect = a5m2_connect or config.a5m2_connect
+    if effective_a5m2_cmd and effective_a5m2_connect:
+        print(f"DB検証: A5M2cmd ({effective_a5m2_cmd})")
+
+    # ブラウザ設定
+    browser_opts = {}
+    context_opts = {
+        "viewport": config.viewport,
+        "locale": config.locale,
+        "ignore_https_errors": config.ignore_https_errors,
+    }
+    if config.auth_type == "basic":
+        context_opts["http_credentials"] = {
+            "username": config.auth.get("username", ""),
+            "password": config.auth.get("password", ""),
+        }
 
     # ブラウザ起動
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=headless)
-        context = await browser.new_context(
-            viewport={"width": 1280, "height": 720},
-            locale="ja-JP",
-        )
+        context = await browser.new_context(**context_opts)
+        if config.timeout:
+            context.set_default_timeout(config.timeout)
         page = await context.new_page()
+
+        # 認証処理
+        if config.auth_type != "none":
+            await authenticate(page, config)
 
         for step in steps:
             print(f"  Step {step.no}: {step.item}...", end=" ")
@@ -324,7 +388,9 @@ async def run_tests(spec_path: str, output_path: str | None = None,
                 # 検証
                 if step.verify_type == "db":
                     passed, message = verify_db_a5m2(
-                        step, a5m2_cmd or "", a5m2_connect or ""
+                        step,
+                        effective_a5m2_cmd or "",
+                        effective_a5m2_connect or "",
                     )
                 elif step.verify_type:
                     passed, message = await verify_screen(page, step)
@@ -371,12 +437,16 @@ def main():
     parser.add_argument("spec", help="テスト仕様書Excelファイルのパス")
     parser.add_argument("-o", "--output", help="エビデンス出力先のパス")
     parser.add_argument(
-        "--a5m2-cmd", default="A5M2cmd.exe",
-        help="A5M2cmd.exe のパス (デフォルト: A5M2cmd.exe)",
+        "-c", "--config",
+        help="プロジェクト設定ファイル（YAML）のパス",
+    )
+    parser.add_argument(
+        "--a5m2-cmd",
+        help="A5M2cmd.exe のパス（設定ファイルより優先）",
     )
     parser.add_argument(
         "--a5m2-connect",
-        help="A5M2の接続文字列 (例: __ConnectionType=Internal;ProviderName=MySQL;...)",
+        help="A5M2の接続文字列（設定ファイルより優先）",
     )
     parser.add_argument("--headed", action="store_true", help="ブラウザを表示して実行")
 
@@ -384,6 +454,7 @@ def main():
     asyncio.run(run_tests(
         spec_path=args.spec,
         output_path=args.output,
+        config_path=args.config,
         a5m2_cmd=args.a5m2_cmd,
         a5m2_connect=args.a5m2_connect,
         headless=not args.headed,
