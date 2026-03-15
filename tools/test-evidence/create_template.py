@@ -153,25 +153,49 @@ def create_template(output_path: str = "examples/test_spec_template.xlsx"):
         ("input", "指定セレクタにテキストを入力"),
         ("select", "指定セレクタのドロップダウンで値を選択"),
         ("wait", "指定ミリ秒待機する"),
+        ("wait_for", "指定セレクタの要素が表示されるまで待つ（入力値=タイムアウトms）"),
+        ("upload", "ファイルアップロード（セレクタ=input[type=file]、入力値=ファイルパス）"),
+        ("hover", "指定セレクタの要素にマウスオーバー"),
+        ("scroll", "スクロール（セレクタ指定で要素まで/入力値=ピクセル数）"),
+        ("keyboard", "キー入力（入力値=Enter, Tab, Escape等）"),
+        ("alert_accept", "次のダイアログ（alert/confirm）を承認"),
+        ("alert_dismiss", "次のダイアログ（alert/confirm）をキャンセル"),
+        ("iframe", "指定セレクタのiframeにフォーカス切り替え"),
     ]
     for i, (action, desc) in enumerate(actions):
         legend[f"A{i + 3}"] = action
         legend[f"B{i + 3}"] = desc
 
-    legend["A9"] = "検証種別"
-    legend["A9"].font = Font(name="Yu Gothic", size=12, bold=True)
+    verify_start = 3 + len(actions) + 1
+    legend[f"A{verify_start}"] = "検証種別"
+    legend[f"A{verify_start}"].font = Font(name="Yu Gothic", size=12, bold=True)
 
     verifications = [
         ("screenshot", "スクリーンショットを撮影してエビデンスに貼付"),
         ("text", "指定セレクタのテキストが期待値と一致するか検証"),
         ("value", "指定セレクタのvalue属性が期待値と一致するか検証"),
         ("visible", "指定セレクタの要素が表示されているか検証"),
+        ("hidden", "指定セレクタの要素が非表示/不在であるか検証"),
         ("url", "現在のURLが期待値と一致するか検証"),
-        ("db", "SQLクエリの結果が期待値と一致するか検証"),
+        ("db", "SQLクエリの結果が期待値と一致するか検証（A5M2連携）"),
     ]
     for i, (vtype, desc) in enumerate(verifications):
-        legend[f"A{i + 11}"] = vtype
-        legend[f"B{i + 11}"] = desc
+        legend[f"A{verify_start + 2 + i}"] = vtype
+        legend[f"B{verify_start + 2 + i}"] = desc
+
+    # 期待値の記法
+    match_start = verify_start + 2 + len(verifications) + 1
+    legend[f"A{match_start}"] = "期待値の記法"
+    legend[f"A{match_start}"].font = Font(name="Yu Gothic", size=12, bold=True)
+
+    match_types = [
+        ("そのまま記述", "完全一致で検証（デフォルト）"),
+        ("contains:文字列", "部分一致で検証（例: contains:ようこそ）"),
+        ("regex:パターン", "正規表現で検証（例: regex:注文番号:\\d+）"),
+    ]
+    for i, (syntax, desc) in enumerate(match_types):
+        legend[f"A{match_start + 2 + i}"] = syntax
+        legend[f"B{match_start + 2 + i}"] = desc
 
     wb.save(output_path)
     print(f"テンプレートを作成しました: {output_path}")

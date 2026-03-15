@@ -9,6 +9,21 @@ from pathlib import Path
 
 import yaml
 
+# Excelフォーマットのデフォルト値
+DEFAULT_EXCEL_COLUMNS = {
+    "no": "A",
+    "item": "B",
+    "action": "C",
+    "selector": "D",
+    "input": "E",
+    "verify_type": "F",
+    "verify_target": "G",
+    "expected": "H",
+    "result": "I",
+    "evidence": "J",
+    "note": "K",
+}
+
 
 class ProjectConfig:
     """プロジェクト設定を管理するクラス."""
@@ -85,6 +100,44 @@ class ProjectConfig:
     def a5m2_connect(self) -> str | None:
         """A5M2の接続文字列."""
         return self.raw.get("a5m2", {}).get("connect")
+
+    # --- Excel フォーマット設定 ---
+
+    @property
+    def excel_columns(self) -> dict[str, str]:
+        """Excelの列マッピング.
+
+        デフォルト: A=No, B=テスト項目, C=操作種別, ... K=備考
+        設定ファイルの excel.columns で上書き可能。
+        """
+        custom = self.raw.get("excel", {}).get("columns", {})
+        return {**DEFAULT_EXCEL_COLUMNS, **custom}
+
+    @property
+    def excel_data_start_row(self) -> int:
+        """データ開始行（デフォルト: 7）."""
+        return self.raw.get("excel", {}).get("data_start_row", 7)
+
+    @property
+    def excel_date_cell(self) -> str:
+        """テスト日を書き込むセル（デフォルト: B3）."""
+        return self.raw.get("excel", {}).get("date_cell", "B3")
+
+    @property
+    def excel_sheets(self) -> list[str]:
+        """実行対象シート名のリスト（空の場合は全シート）."""
+        return self.raw.get("excel", {}).get("sheets", [])
+
+    # --- テスト実行制御 ---
+
+    @property
+    def on_fail(self) -> str:
+        """NG時の動作 (continue / abort).
+
+        - continue: NGでも後続ステップを実行する（デフォルト）
+        - abort: NG発生時点で当該シートの残りステップをSKIPにする
+        """
+        return self.raw.get("test", {}).get("on_fail", "continue")
 
     # --- 変数置換 ---
 

@@ -7,6 +7,8 @@ Excel仕様書を読み取り、Playwrightでブラウザ操作を実行し、
 import asyncio
 import csv
 import io
+import logging
+import re
 import shutil
 import subprocess
 import sys
@@ -22,21 +24,10 @@ from playwright.async_api import async_playwright
 
 from project_config import ProjectConfig
 
-# 定数
-HEADER_ROW = 6
-DATA_START_ROW = 7
-COL_NO = "A"
-COL_ITEM = "B"
-COL_ACTION = "C"
-COL_SELECTOR = "D"
-COL_INPUT = "E"
-COL_VERIFY_TYPE = "F"
-COL_VERIFY_TARGET = "G"
-COL_EXPECTED = "H"
-COL_RESULT = "I"
-COL_EVIDENCE = "J"
-COL_NOTE = "K"
+# ログ設定
+logger = logging.getLogger("test-evidence")
 
+# スタイル定数
 OK_FILL = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
 OK_FONT = Font(name="Yu Gothic", size=10, bold=True, color="006100")
 NG_FILL = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
@@ -65,29 +56,42 @@ class TestStep:
         self.note = note or ""
 
 
-def read_test_steps(ws, config: ProjectConfig | None = None) -> list[TestStep]:
+class StopTestError(Exception):
+    """NG時にテスト実行を中断するための例外."""
+
+
+def read_test_steps(ws, config: ProjectConfig) -> list[TestStep]:
     """テスト仕様書シートからテストステップを読み取る.
 
-    config が指定されている場合、セレクタ・入力値・期待値等の
-    ${変数名} を設定ファイルの値で置換する。
+    config の excel セクションで列マッピング・ヘッダー行を制御可能。
+    セレクタ・入力値・期待値等の ${変数名} を設定ファイルの値で置換する。
     """
-    resolve = config.resolve if config else (lambda x: x)
+    resolve = config.resolve
+    col_map = config.excel_columns
+    data_start = config.excel_data_start_row
+
     steps = []
-    for row in range(DATA_START_ROW, ws.max_row + 1):
-        no = ws[f"{COL_NO}{row}"].value
+    for row in range(data_start, ws.max_row + 1):
+        no = ws[f"{col_map['no']}{row}"].value
         if no is None:
             continue
         step = TestStep(
             row=row,
             no=no,
-            item=ws[f"{COL_ITEM}{row}"].value,
-            action=ws[f"{COL_ACTION}{row}"].value,
-            selector=resolve(ws[f"{COL_SELECTOR}{row}"].value or ""),
-            input_val=resolve(str(ws[f"{COL_INPUT}{row}"].value) if ws[f"{COL_INPUT}{row}"].value is not None else ""),
-            verify_type=ws[f"{COL_VERIFY_TYPE}{row}"].value,
-            verify_target=resolve(ws[f"{COL_VERIFY_TARGET}{row}"].value or ""),
-            expected=resolve(str(ws[f"{COL_EXPECTED}{row}"].value) if ws[f"{COL_EXPECTED}{row}"].value is not None else ""),
-            note=ws[f"{COL_NOTE}{row}"].value,
+            item=ws[f"{col_map['item']}{row}"].value,
+            action=ws[f"{col_map['action']}{row}"].value,
+            selector=resolve(ws[f"{col_map['selector']}{row}"].value or ""),
+            input_val=resolve(
+                str(ws[f"{col_map['input']}{row}"].value)
+                if ws[f"{col_map['input']}{row}"].value is not None else ""
+            ),
+            verify_type=ws[f"{col_map['verify_type']}{row}"].value,
+            verify_target=resolve(ws[f"{col_map['verify_target']}{row}"].value or ""),
+            expected=resolve(
+                str(ws[f"{col_map['expected']}{row}"].value)
+                if ws[f"{col_map['expected']}{row}"].value is not None else ""
+            ),
+            note=ws[f"{col_map['note']}{row}"].value,
         )
         steps.append(step)
     return steps
@@ -95,25 +99,104 @@ def read_test_steps(ws, config: ProjectConfig | None = None) -> list[TestStep]:
 
 async def execute_action(page, step: TestStep):
     """ブラウザ操作を実行する."""
-    if step.action == "navigate":
+    action = step.action
+
+    if action == "navigate":
         await page.goto(step.input_val, wait_until="networkidle")
-    elif step.action == "click":
+
+    elif action == "click":
         await page.click(step.selector)
         await page.wait_for_load_state("networkidle")
-    elif step.action == "input":
+
+    elif action == "input":
         await page.fill(step.selector, step.input_val)
-    elif step.action == "select":
+
+    elif action == "select":
         await page.select_option(step.selector, step.input_val)
-    elif step.action == "wait":
+
+    elif action == "wait":
         ms = int(step.input_val) if step.input_val else 1000
         await asyncio.sleep(ms / 1000)
 
+    elif action == "wait_for":
+        timeout = int(step.input_val) if step.input_val else 30000
+        await page.wait_for_selector(step.selector, state="visible", timeout=timeout)
 
-async def take_screenshot(page, output_dir: Path, step_no) -> Path:
-    """スクリーンショットを撮影して保存する."""
+    elif action == "upload":
+        await page.set_input_files(step.selector, step.input_val)
+
+    elif action == "hover":
+        await page.hover(step.selector)
+
+    elif action == "scroll":
+        if step.selector:
+            await page.eval_on_selector(
+                step.selector,
+                "el => el.scrollIntoView({behavior: 'smooth', block: 'center'})",
+            )
+        else:
+            y = int(step.input_val) if step.input_val else 500
+            await page.evaluate(f"window.scrollBy(0, {y})")
+
+    elif action == "keyboard":
+        await page.keyboard.press(step.input_val)
+
+    elif action == "alert_accept":
+        page.once("dialog", lambda d: asyncio.ensure_future(d.accept()))
+
+    elif action == "alert_dismiss":
+        page.once("dialog", lambda d: asyncio.ensure_future(d.dismiss()))
+
+    elif action == "iframe":
+        # iframe内の操作は次ステップ以降で使えるようframeを返す
+        # （現状は指定セレクタのiframeにフォーカス切り替え）
+        frame = page.frame_locator(step.selector)
+        return frame
+
+    else:
+        logger.warning(f"未知の操作種別: {action}")
+
+
+async def take_screenshot(page, output_dir: Path, step_no,
+                          element_selector: str | None = None) -> Path:
+    """スクリーンショットを撮影して保存する.
+
+    element_selector が指定された場合、その要素のみをキャプチャする。
+    """
     screenshot_path = output_dir / f"step_{step_no}.png"
+    if element_selector:
+        element = await page.query_selector(element_selector)
+        if element:
+            await element.screenshot(path=str(screenshot_path))
+            return screenshot_path
     await page.screenshot(path=str(screenshot_path), full_page=False)
     return screenshot_path
+
+
+def _match_expected(actual: str, expected: str) -> tuple[bool, str]:
+    """期待値と実際値を照合する.
+
+    期待値のプレフィックスで照合方式を制御:
+    - "contains:" → 部分一致
+    - "regex:"    → 正規表現マッチ
+    - (プレフィックスなし) → 完全一致
+    """
+    if expected.startswith("contains:"):
+        pattern = expected[len("contains:"):]
+        if pattern in actual:
+            return True, f"OK: '{actual}' に '{pattern}' を含む"
+        return False, f"NG: '{actual}' に '{pattern}' が含まれない"
+
+    if expected.startswith("regex:"):
+        pattern = expected[len("regex:"):]
+        if re.search(pattern, actual):
+            return True, f"OK: '{actual}' が /{pattern}/ にマッチ"
+        return False, f"NG: '{actual}' が /{pattern}/ にマッチしない"
+
+    # 完全一致
+    if actual == expected:
+        return True, f"OK: '{actual}'"
+    return False, f"NG: 期待値='{expected}', 実際='{actual}'"
 
 
 async def verify_screen(page, step: TestStep) -> tuple[bool, str]:
@@ -122,20 +205,15 @@ async def verify_screen(page, step: TestStep) -> tuple[bool, str]:
         element = await page.query_selector(step.verify_target)
         if element is None:
             return False, f"要素が見つかりません: {step.verify_target}"
-        actual = await element.text_content()
-        actual = (actual or "").strip()
-        if actual == step.expected:
-            return True, f"OK: '{actual}'"
-        return False, f"NG: 期待値='{step.expected}', 実際='{actual}'"
+        actual = (await element.text_content() or "").strip()
+        return _match_expected(actual, step.expected)
 
     elif step.verify_type == "value":
         element = await page.query_selector(step.verify_target)
         if element is None:
             return False, f"要素が見つかりません: {step.verify_target}"
         actual = await element.get_attribute("value") or ""
-        if actual == step.expected:
-            return True, f"OK: '{actual}'"
-        return False, f"NG: 期待値='{step.expected}', 実際='{actual}'"
+        return _match_expected(actual, step.expected)
 
     elif step.verify_type == "visible":
         element = await page.query_selector(step.verify_target)
@@ -146,11 +224,18 @@ async def verify_screen(page, step: TestStep) -> tuple[bool, str]:
             return True, "OK: 要素は表示されています"
         return False, "NG: 要素が表示されていません"
 
+    elif step.verify_type == "hidden":
+        element = await page.query_selector(step.verify_target)
+        if element is None:
+            return True, "OK: 要素が存在しません（非表示）"
+        is_visible = await element.is_visible()
+        if not is_visible:
+            return True, "OK: 要素は非表示です"
+        return False, "NG: 要素が表示されています"
+
     elif step.verify_type == "url":
         actual_url = page.url
-        if actual_url == step.expected:
-            return True, f"OK: URL一致"
-        return False, f"NG: 期待値='{step.expected}', 実際='{actual_url}'"
+        return _match_expected(actual_url, step.expected)
 
     elif step.verify_type == "screenshot":
         return True, "スクリーンショット取得"
@@ -159,20 +244,14 @@ async def verify_screen(page, step: TestStep) -> tuple[bool, str]:
 
 
 def verify_db_a5m2(step: TestStep, a5m2_cmd: str, a5m2_connect: str) -> tuple[bool, str]:
-    """A5M2cmd経由でSQLを実行し、CSV出力された結果を検証する.
-
-    A5:SQL Mk-2 のコマンドラインユーティリティを使用してDBに接続し、
-    SQLクエリの結果を期待値と照合する。
-    """
+    """A5M2cmd経由でSQLを実行し、CSV出力された結果を検証する."""
     if not a5m2_cmd:
         return False, "A5M2cmdのパスが設定されていません"
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        # 検証用SQLを一時ファイルに書き出し
         sql_path = Path(tmpdir) / "query.sql"
         sql_path.write_text(step.verify_target, encoding="utf-8")
 
-        # A5M2cmdでSQL実行
         cmd = [
             a5m2_cmd,
             f"/Connect={a5m2_connect}",
@@ -194,7 +273,6 @@ def verify_db_a5m2(step: TestStep, a5m2_cmd: str, a5m2_connect: str) -> tuple[bo
         if result.returncode != 0:
             return False, f"A5M2cmdエラー: {result.stderr.strip()}"
 
-        # 出力CSV（Query-1.csv）を読み取り
         csv_path = Path(tmpdir) / "Query-1.csv"
         if not csv_path.exists():
             return False, "A5M2cmd: クエリ結果のCSVが出力されませんでした"
@@ -209,9 +287,7 @@ def verify_db_a5m2(step: TestStep, a5m2_cmd: str, a5m2_connect: str) -> tuple[bo
         else:
             actual = first_row[0]
 
-    if actual == step.expected:
-        return True, f"OK: DB結果='{actual}'"
-    return False, f"NG: 期待値='{step.expected}', DB結果='{actual}'"
+    return _match_expected(actual, step.expected)
 
 
 def resize_screenshot(screenshot_path: Path) -> bytes:
@@ -223,11 +299,11 @@ def resize_screenshot(screenshot_path: Path) -> bytes:
         return buf.getvalue()
 
 
-def write_result(ws, step: TestStep, passed: bool | None, message: str,
-                 screenshot_path: Path | None):
+def write_result(ws, col_map: dict, step: TestStep, passed: bool | None,
+                 message: str, screenshot_path: Path | None):
     """検証結果とエビデンスをExcelに書き込む."""
-    result_cell = ws[f"{COL_RESULT}{step.row}"]
-    evidence_cell = ws[f"{COL_EVIDENCE}{step.row}"]
+    result_cell = ws[f"{col_map['result']}{step.row}"]
+    evidence_col = col_map["evidence"]
 
     if passed is True:
         result_cell.value = "OK"
@@ -244,7 +320,7 @@ def write_result(ws, step: TestStep, passed: bool | None, message: str,
 
     # メッセージをノート欄に追記
     if message:
-        note_cell = ws[f"{COL_NOTE}{step.row}"]
+        note_cell = ws[f"{col_map['note']}{step.row}"]
         existing = note_cell.value or ""
         note_cell.value = f"{existing}\n{message}".strip() if existing else message
 
@@ -255,7 +331,7 @@ def write_result(ws, step: TestStep, passed: bool | None, message: str,
         img = ExcelImage(img_stream)
         img.width = EVIDENCE_IMG_WIDTH
         img.height = EVIDENCE_IMG_HEIGHT
-        ws.add_image(img, f"{COL_EVIDENCE}{step.row}")
+        ws.add_image(img, f"{evidence_col}{step.row}")
         ws.row_dimensions[step.row].height = EVIDENCE_IMG_HEIGHT * 0.75
 
 
@@ -265,7 +341,6 @@ async def authenticate(page, config: ProjectConfig):
     auth_type = config.auth_type
 
     if auth_type == "form":
-        # フォーム認証: ログインページに遷移して入力・送信
         login_url = config.resolve(auth.get("login_url", ""))
         if login_url:
             await page.goto(login_url, wait_until="networkidle")
@@ -277,34 +352,119 @@ async def authenticate(page, config: ProjectConfig):
         if submit:
             await page.click(submit)
             await page.wait_for_load_state("networkidle")
-        print(f"  認証完了 (form)")
+        logger.info("認証完了 (form)")
 
     elif auth_type == "basic":
-        # Basic認証: Playwrightのコンテキスト認証を使用
-        # （context作成時にhttp_credentialsで設定済み）
-        print(f"  認証設定済み (basic)")
+        logger.info("認証設定済み (basic)")
 
     elif auth_type == "cookie":
-        # Cookie認証: 事前定義のCookieを設定
         for cookie in auth.get("cookies", []):
             await page.context.add_cookies([cookie])
-        print(f"  認証完了 (cookie: {len(auth.get('cookies', []))}件)")
+        logger.info(f"認証完了 (cookie: {len(auth.get('cookies', []))}件)")
+
+
+async def run_sheet(page, ws, config: ProjectConfig, screenshot_dir: Path,
+                    effective_a5m2_cmd: str, effective_a5m2_connect: str,
+                    sheet_name: str) -> tuple[int, int, int]:
+    """1シート分のテストを実行する.
+
+    Returns:
+        (ok_count, ng_count, skip_count)
+    """
+    col_map = config.excel_columns
+    on_fail = config.on_fail
+
+    steps = read_test_steps(ws, config)
+    if not steps:
+        logger.info(f"[{sheet_name}] テストステップが見つかりません。")
+        return 0, 0, 0
+
+    logger.info(f"[{sheet_name}] {len(steps)} ステップを実行")
+
+    aborted = False
+    for step in steps:
+        logger.info(f"  Step {step.no}: {step.item}...")
+
+        screenshot_path = None
+        passed = None
+        message = ""
+
+        if aborted:
+            # 前ステップで中断が決まった場合、残りはSKIP
+            passed = None
+            message = "前ステップのNG/エラーにより中断"
+            write_result(ws, col_map, step, passed, message, None)
+            logger.info(f"  Step {step.no}: [SKIP] {message}")
+            continue
+
+        try:
+            # ブラウザ操作を実行
+            if step.action:
+                await execute_action(page, step)
+
+            # スクリーンショット撮影
+            if step.action or step.verify_type == "screenshot":
+                screenshot_path = await take_screenshot(
+                    page, screenshot_dir, f"{sheet_name}_{step.no}",
+                )
+
+            # 検証
+            if step.verify_type == "db":
+                passed, message = verify_db_a5m2(
+                    step,
+                    effective_a5m2_cmd or "",
+                    effective_a5m2_connect or "",
+                )
+            elif step.verify_type:
+                passed, message = await verify_screen(page, step)
+            else:
+                passed = True
+                message = "操作完了"
+
+        except Exception as e:
+            passed = False
+            message = f"エラー: {e}"
+            try:
+                screenshot_path = await take_screenshot(
+                    page, screenshot_dir, f"{sheet_name}_{step.no}_error",
+                )
+            except Exception:
+                pass
+
+        # 結果をExcelに書き込み
+        write_result(ws, col_map, step, passed, message, screenshot_path)
+
+        status = "OK" if passed else ("NG" if passed is False else "SKIP")
+        logger.info(f"  Step {step.no}: [{status}] {message}")
+
+        # NG時の制御
+        if passed is False and on_fail == "abort":
+            logger.warning(f"  NG検出 → テスト中断 (on_fail=abort)")
+            aborted = True
+
+    # サマリー集計
+    ok = sum(1 for s in steps if ws[f"{col_map['result']}{s.row}"].value == "OK")
+    ng = sum(1 for s in steps if ws[f"{col_map['result']}{s.row}"].value == "NG")
+    skip = sum(1 for s in steps if ws[f"{col_map['result']}{s.row}"].value == "SKIP")
+    return ok, ng, skip
 
 
 async def run_tests(spec_path: str, output_path: str | None = None,
                     config_path: str | None = None,
                     a5m2_cmd: str | None = None,
                     a5m2_connect: str | None = None,
-                    headless: bool = True):
+                    headless: bool = True,
+                    sheets: list[str] | None = None):
     """テスト仕様書を実行してエビデンスを生成する.
 
     Args:
         spec_path: テスト仕様書Excelのパス
         output_path: エビデンス出力先Excelのパス（省略時は元ファイルに _evidence を付与）
         config_path: プロジェクト設定ファイル（YAML）のパス
-        a5m2_cmd: A5M2cmd.exe のパス（DB検証に使用。設定ファイルより優先）
-        a5m2_connect: A5M2の接続文字列（DB検証に使用。設定ファイルより優先）
+        a5m2_cmd: A5M2cmd.exe のパス（設定ファイルより優先）
+        a5m2_connect: A5M2の接続文字列（設定ファイルより優先）
         headless: ヘッドレスモードで実行するか
+        sheets: 実行対象のシート名リスト（省略時は設定ファイルの指定またはデフォルト）
     """
     # プロジェクト設定を読み込み
     config = ProjectConfig(config_path)
@@ -314,36 +474,37 @@ async def run_tests(spec_path: str, output_path: str | None = None,
         output_path = spec_path.parent / f"{spec_path.stem}_evidence{spec_path.suffix}"
     output_path = Path(output_path)
 
+    # ログファイル設定
+    log_path = output_path.parent / f"{output_path.stem}.log"
+    _setup_logging(log_path)
+
+    logger.info(f"テスト仕様書: {spec_path}")
+    if config_path:
+        logger.info(f"プロジェクト設定: {config_path}")
+
     # 元ファイルをコピーして出力用にする
     shutil.copy2(spec_path, output_path)
     wb = load_workbook(str(output_path))
-    ws = wb["テスト仕様書"]
 
-    # テスト日を記入
-    ws["B3"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # 実行対象シートを決定
+    target_sheets = sheets or config.excel_sheets
+    if not target_sheets:
+        # 凡例シートを除外して全シートを対象にする
+        target_sheets = [name for name in wb.sheetnames if name != "凡例"]
 
-    # テストステップを読み取り（変数置換あり）
-    steps = read_test_steps(ws, config)
-    if not steps:
-        print("テストステップが見つかりません。")
-        return
-
-    print(f"テスト仕様書を読み込みました: {len(steps)} ステップ")
-    if config_path:
-        print(f"プロジェクト設定: {config_path}")
+    logger.info(f"対象シート: {target_sheets}")
 
     # スクリーンショット保存ディレクトリ
     screenshot_dir = output_path.parent / "screenshots"
     screenshot_dir.mkdir(exist_ok=True)
 
-    # A5M2設定: CLI引数 > 設定ファイル の優先順位
-    effective_a5m2_cmd = a5m2_cmd or config.a5m2_cmd
-    effective_a5m2_connect = a5m2_connect or config.a5m2_connect
+    # A5M2設定: CLI引数 > 設定ファイル
+    effective_a5m2_cmd = a5m2_cmd or config.a5m2_cmd or ""
+    effective_a5m2_connect = a5m2_connect or config.a5m2_connect or ""
     if effective_a5m2_cmd and effective_a5m2_connect:
-        print(f"DB検証: A5M2cmd ({effective_a5m2_cmd})")
+        logger.info(f"DB検証: A5M2cmd ({effective_a5m2_cmd})")
 
     # ブラウザ設定
-    browser_opts = {}
     context_opts = {
         "viewport": config.viewport,
         "locale": config.locale,
@@ -356,6 +517,8 @@ async def run_tests(spec_path: str, output_path: str | None = None,
         }
 
     # ブラウザ起動
+    total_ok = total_ng = total_skip = 0
+
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=headless)
         context = await browser.new_context(**context_opts)
@@ -367,65 +530,63 @@ async def run_tests(spec_path: str, output_path: str | None = None,
         if config.auth_type != "none":
             await authenticate(page, config)
 
-        for step in steps:
-            print(f"  Step {step.no}: {step.item}...", end=" ")
+        # シートごとにテスト実行
+        for sheet_name in target_sheets:
+            if sheet_name not in wb.sheetnames:
+                logger.warning(f"シート '{sheet_name}' が見つかりません。スキップします。")
+                continue
 
-            screenshot_path = None
-            passed = None
-            message = ""
+            ws = wb[sheet_name]
 
-            try:
-                # ブラウザ操作を実行
-                if step.action:
-                    await execute_action(page, step)
+            # テスト日を記入（日付セルが設定で指定されている場合）
+            date_cell = config.excel_date_cell
+            if date_cell:
+                ws[date_cell] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-                # スクリーンショット撮影（操作がある場合、またはscreenshot検証の場合）
-                if step.action or step.verify_type == "screenshot":
-                    screenshot_path = await take_screenshot(
-                        page, screenshot_dir, step.no
-                    )
+            ok, ng, skip = await run_sheet(
+                page, ws, config, screenshot_dir,
+                effective_a5m2_cmd, effective_a5m2_connect,
+                sheet_name,
+            )
+            total_ok += ok
+            total_ng += ng
+            total_skip += skip
 
-                # 検証
-                if step.verify_type == "db":
-                    passed, message = verify_db_a5m2(
-                        step,
-                        effective_a5m2_cmd or "",
-                        effective_a5m2_connect or "",
-                    )
-                elif step.verify_type:
-                    passed, message = await verify_screen(page, step)
-                else:
-                    passed = True
-                    message = "操作完了"
-
-            except Exception as e:
-                passed = False
-                message = f"エラー: {e}"
-                # エラー時もスクリーンショットを試みる
-                try:
-                    screenshot_path = await take_screenshot(
-                        page, screenshot_dir, f"{step.no}_error"
-                    )
-                except Exception:
-                    pass
-
-            # 結果をExcelに書き込み
-            write_result(ws, step, passed, message, screenshot_path)
-
-            status = "OK" if passed else ("NG" if passed is False else "SKIP")
-            print(f"[{status}] {message}")
+            logger.info(f"[{sheet_name}] 結果: {ok} OK, {ng} NG, {skip} SKIP")
 
         await browser.close()
 
     # ワークブックを保存
     wb.save(str(output_path))
-    print(f"\nエビデンスを保存しました: {output_path}")
+    logger.info(f"エビデンスを保存しました: {output_path}")
 
-    # サマリー表示
-    ok_count = sum(1 for s in steps if ws[f"{COL_RESULT}{s.row}"].value == "OK")
-    ng_count = sum(1 for s in steps if ws[f"{COL_RESULT}{s.row}"].value == "NG")
-    total = len(steps)
-    print(f"結果: {ok_count}/{total} OK, {ng_count}/{total} NG")
+    total = total_ok + total_ng + total_skip
+    logger.info(f"全体結果: {total_ok}/{total} OK, {total_ng}/{total} NG, {total_skip}/{total} SKIP")
+    logger.info(f"ログ: {log_path}")
+
+    return total_ok, total_ng, total_skip
+
+
+def _setup_logging(log_path: Path):
+    """コンソール + ファイルの両方にログを出力する."""
+    logger.setLevel(logging.DEBUG)
+    # 既存ハンドラをクリア（多重追加防止）
+    logger.handlers.clear()
+
+    fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s",
+                            datefmt="%Y-%m-%d %H:%M:%S")
+
+    # コンソール出力
+    console = logging.StreamHandler(sys.stdout)
+    console.setLevel(logging.INFO)
+    console.setFormatter(fmt)
+    logger.addHandler(console)
+
+    # ファイル出力
+    file_handler = logging.FileHandler(str(log_path), encoding="utf-8", mode="w")
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(fmt)
+    logger.addHandler(file_handler)
 
 
 def main():
@@ -439,6 +600,10 @@ def main():
     parser.add_argument(
         "-c", "--config",
         help="プロジェクト設定ファイル（YAML）のパス",
+    )
+    parser.add_argument(
+        "--sheets", nargs="+",
+        help="実行対象のシート名（複数指定可。省略時は設定ファイルまたは全シート）",
     )
     parser.add_argument(
         "--a5m2-cmd",
@@ -458,6 +623,7 @@ def main():
         a5m2_cmd=args.a5m2_cmd,
         a5m2_connect=args.a5m2_connect,
         headless=not args.headed,
+        sheets=args.sheets,
     ))
 
 

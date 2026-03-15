@@ -4,12 +4,16 @@
 
 ## 機能
 
-- **Excel仕様書読み取り**: テスト手順・期待値をExcelから自動取得
-- **ブラウザ自動操作**: Playwrightで画面遷移・入力・クリック等を実行
+- **Excel仕様書読み取り**: テスト手順・期待値をExcelから自動取得（フォーマット可変対応）
+- **ブラウザ自動操作**: Playwrightで画面遷移・入力・クリック等を実行（13種の操作に対応）
 - **スクリーンショット**: 各ステップの画面キャプチャを自動取得
-- **画面検証**: テキスト・値・表示状態・URLの自動検証（OK/NG判定）
+- **画面検証**: テキスト・値・表示状態・URLの自動検証（完全一致/部分一致/正規表現）
 - **DB検証（A5M2連携）**: A5:SQL Mk-2 経由でSQLクエリを実行し、結果が期待値と一致するか確認
 - **エビデンス生成**: スクショ+OK/NG判定を元のExcelに自動貼付して出力
+- **プロジェクト設定**: YAML設定ファイルで環境差分・認証・Excelフォーマットを制御
+- **複数シート対応**: 1ファイル内の複数シートを一括実行可能
+- **NG時制御**: NG発生時に中断/継続を選択可能
+- **ログ出力**: コンソール＋ファイルに実行ログを記録
 
 ## セットアップ
 
@@ -54,10 +58,10 @@ environment:
 
 | 列 | 内容 | 例 |
 |---|---|---|
-| 操作種別 | navigate / click / input / select / wait | `click` |
+| 操作種別 | navigate / click / input / wait_for 等 | `click` |
 | 対象セレクタ | CSSセレクタ | `#login-button` |
 | 入力値/期待値 | 操作に応じた値（`${変数名}` 使用可） | `${test_user}` |
-| 検証種別 | screenshot / text / value / visible / url / db | `text` |
+| 検証種別 | screenshot / text / value / visible / hidden / url / db | `text` |
 | 検証対象 | セレクタ or SQLクエリ（`${変数名}` 使用可） | `.welcome-msg` |
 | 期待値 | 検証の期待値（`${変数名}` 使用可） | `ようこそ` |
 
@@ -72,6 +76,9 @@ python evidence_runner.py テスト仕様書.xlsx -c my_project.yaml --headed
 
 # 出力先を指定
 python evidence_runner.py テスト仕様書.xlsx -c my_project.yaml -o エビデンス.xlsx
+
+# 特定シートだけ実行
+python evidence_runner.py テスト仕様書.xlsx -c my_project.yaml --sheets ログイン機能 商品検索
 
 # 設定ファイルなしでも実行可能（従来通り）
 python evidence_runner.py テスト仕様書.xlsx
@@ -88,6 +95,7 @@ python evidence_runner.py テスト仕様書.xlsx -c my_project.yaml \
 - 各ステップのスクリーンショットがエビデンス列に貼付
 - OK/NG判定が結果列に記入（色付き）
 - 検証詳細が備考欄に追記
+- 実行ログが `テスト仕様書_evidence.log` に保存
 
 ## プロジェクト設定ファイル
 
@@ -100,12 +108,33 @@ YAML形式の設定ファイルで、各社プロダクト固有の設定を管�
 | `environment.base_url` | ベースURL | `${base_url}` で参照可能 |
 | `environment.variables` | カスタム変数 | `${変数名}` で仕様書内から参照 |
 | `auth.type` | 認証方式 | `none` / `basic` / `form` / `cookie` |
-| `auth.fields` | フォーム認証の入力フィールド | セレクタと値のペア |
 | `browser.viewport` | ビューポートサイズ | width / height |
 | `browser.timeout` | 操作タイムアウト（ms） | デフォルト: 30000 |
 | `browser.ignore_https_errors` | 証明書エラー無視 | 自己署名証明書の環境用 |
+| `excel.columns` | 列マッピング | 顧客のExcelフォーマットに対応 |
+| `excel.data_start_row` | データ開始行 | デフォルト: 7 |
+| `excel.sheets` | 実行対象シート | 省略時は全シート（凡例除く） |
+| `excel.date_cell` | テスト日セル | デフォルト: B3 |
+| `test.on_fail` | NG時動作 | `continue`（続行）/ `abort`（中断） |
 | `a5m2.cmd` | A5M2cmd.exe パス | DB検証用 |
 | `a5m2.connect` | A5M2接続文字列 | DB検証用 |
+
+### Excelフォーマットの可変対応
+
+顧客のExcelフォーマットが標準と異なる場合、設定ファイルで列マッピングを変更できます:
+
+```yaml
+excel:
+  data_start_row: 10    # データが10行目から始まる場合
+  date_cell: "C2"       # テスト日のセル位置
+  sheets:               # 実行対象シート
+    - "ログイン機能"
+    - "商品検索"
+  columns:              # 変更したい列だけ指定
+    no: "B"             # No.がB列にある場合
+    action: "D"         # 操作種別がD列にある場合
+    result: "L"         # 結果がL列にある場合
+```
 
 ### 認証方式
 
@@ -141,6 +170,16 @@ auth:
       path: "/"
 ```
 
+### NG時の制御
+
+```yaml
+test:
+  on_fail: abort  # NG発生時、当該シートの残りステップをSKIPにする
+```
+
+- `continue`（デフォルト）: NGでも後続ステップを実行し続ける
+- `abort`: NG発生時点で残りステップをSKIPにする（ログイン失敗時など、後続が無意味な場合に有効）
+
 ### 環境の切り替え
 
 同じ仕様書を複数環境で使い回す場合、設定ファイルを環境ごとに作成します:
@@ -162,13 +201,21 @@ python evidence_runner.py テスト仕様書.xlsx -c config/staging.yaml
 
 ## 対応する操作種別
 
-| 種別 | 動作 |
-|---|---|
-| `navigate` | 指定URLに遷移 |
-| `click` | 要素をクリック |
-| `input` | テキスト入力 |
-| `select` | ドロップダウン選択 |
-| `wait` | 指定ミリ秒待機 |
+| 種別 | 動作 | セレクタ | 入力値 |
+|---|---|---|---|
+| `navigate` | 指定URLに遷移 | - | URL |
+| `click` | 要素をクリック | CSS | - |
+| `input` | テキスト入力 | CSS | テキスト |
+| `select` | ドロップダウン選択 | CSS | 値 |
+| `wait` | 固定秒数待機 | - | ミリ秒 |
+| `wait_for` | 要素が表示されるまで待機 | CSS | タイムアウト(ms) |
+| `upload` | ファイルアップロード | CSS (`input[type=file]`) | ファイルパス |
+| `hover` | マウスオーバー | CSS | - |
+| `scroll` | スクロール | CSS（要素まで） or なし | ピクセル数 |
+| `keyboard` | キー入力 | - | `Enter`, `Tab`, `Escape` 等 |
+| `alert_accept` | ダイアログを承認 | - | - |
+| `alert_dismiss` | ダイアログをキャンセル | - | - |
+| `iframe` | iframeにフォーカス切替 | CSS | - |
 
 ## 対応する検証種別
 
@@ -178,8 +225,19 @@ python evidence_runner.py テスト仕様書.xlsx -c config/staging.yaml
 | `text` | 要素のテキストが期待値と一致するか |
 | `value` | 要素のvalue属性が期待値と一致するか |
 | `visible` | 要素が表示されているか |
+| `hidden` | 要素が非表示/不在であるか |
 | `url` | URLが期待値と一致するか |
 | `db` | A5M2cmd経由でSQLクエリを実行し、結果が期待値と一致するか |
+
+### 期待値の記法
+
+text, value, url, db 検証で使用可能:
+
+| 記法 | 照合方式 | 例 |
+|---|---|---|
+| そのまま記述 | 完全一致（デフォルト） | `ようこそ、testuser さん` |
+| `contains:文字列` | 部分一致 | `contains:ようこそ` |
+| `regex:パターン` | 正規表現 | `regex:注文番号:\d+` |
 
 ## DB検証（A5M2連携）
 

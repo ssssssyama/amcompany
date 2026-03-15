@@ -50,6 +50,40 @@ browser:
   timeout: 30000           # 操作タイムアウト（ミリ秒）
   ignore_https_errors: false  # オレオレ証明書の環境ではtrueに
 
+# --- Excelフォーマット設定 ---
+# 顧客のExcelフォーマットに合わせて列マッピングやヘッダー行を変更可能
+excel:
+  # データ開始行（デフォルト: 7。ヘッダーが6行目の場合）
+  data_start_row: 7
+
+  # テスト日を書き込むセル
+  date_cell: "B3"
+
+  # 実行対象シート名（省略時は凡例シートを除く全シート）
+  # sheets:
+  #   - "ログイン機能"
+  #   - "商品検索"
+  #   - "カート機能"
+
+  # 列マッピング（デフォルト値を上書きしたい列のみ指定すればOK）
+  # columns:
+  #   no: "A"            # No.
+  #   item: "B"          # テスト項目
+  #   action: "C"        # 操作種別
+  #   selector: "D"      # 対象セレクタ
+  #   input: "E"         # 入力値/期待値
+  #   verify_type: "F"   # 検証種別
+  #   verify_target: "G" # 検証対象
+  #   expected: "H"      # 期待値
+  #   result: "I"        # 結果
+  #   evidence: "J"      # エビデンス
+  #   note: "K"          # 備考
+
+# --- テスト実行制御 ---
+test:
+  # NG時の動作: continue（続行）/ abort（中断して残りをSKIP）
+  on_fail: abort
+
 # --- A5M2 DB検証設定（オプション） ---
 # a5m2:
 #   cmd: "C:\\A5M2\\A5M2cmd.exe"
