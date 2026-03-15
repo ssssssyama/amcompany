@@ -89,17 +89,33 @@ class ProjectConfig:
         """HTTPS証明書エラーを無視するか."""
         return self.raw.get("browser", {}).get("ignore_https_errors", False)
 
-    # --- A5M2設定 ---
+    # --- DB検証設定 ---
+
+    @property
+    def db_type(self) -> str:
+        """DB検証方式 (a5m2 / sqlite)."""
+        return self.raw.get("db", {}).get("type", "a5m2")
+
+    @property
+    def sqlite_path(self) -> str | None:
+        """SQLiteデータベースファイルのパス."""
+        return self.raw.get("db", {}).get("path")
 
     @property
     def a5m2_cmd(self) -> str | None:
         """A5M2cmd.exe のパス."""
-        return self.raw.get("a5m2", {}).get("cmd")
+        a5m2 = self.raw.get("a5m2", {})
+        if a5m2:
+            return a5m2.get("cmd")
+        return self.raw.get("db", {}).get("a5m2_cmd")
 
     @property
     def a5m2_connect(self) -> str | None:
         """A5M2の接続文字列."""
-        return self.raw.get("a5m2", {}).get("connect")
+        a5m2 = self.raw.get("a5m2", {})
+        if a5m2:
+            return a5m2.get("connect")
+        return self.raw.get("db", {}).get("a5m2_connect")
 
     # --- Excel フォーマット設定 ---
 

@@ -5,3 +5,6 @@
 *_evidence_full.log
 demo_test_spec.xlsx
 screenshots/
+
+# SQLiteデータベース
+demo.db

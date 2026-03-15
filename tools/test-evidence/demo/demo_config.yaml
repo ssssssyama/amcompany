@@ -1,9 +1,8 @@
 # デモアプリ用プロジェクト設定
-# app.html をローカルサーバーで配信して使用する
-#   python -m http.server 8080 --directory demo/
+# Flask サーバーで配信: python demo/server.py
 
 environment:
-  base_url: "http://localhost:8080/app.html"
+  base_url: "http://localhost:5000"
 
   variables:
     test_user: "testuser"
@@ -29,3 +28,8 @@ excel:
 
 test:
   on_fail: abort
+
+# DB検証設定（SQLiteを直接使用）
+db:
+  type: sqlite
+  path: "demo/demo.db"

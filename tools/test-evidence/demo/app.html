@@ -20,11 +20,13 @@
   .login-box h1 { text-align: center; margin-bottom: 30px; color: #333; font-size: 24px; }
   .form-group { margin-bottom: 20px; }
   .form-group label { display: block; margin-bottom: 6px; font-weight: 600; color: #555; }
-  .form-group input, .form-group select {
+  .form-group input, .form-group select, .form-group textarea {
     width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 8px;
-    font-size: 14px; transition: border-color 0.3s;
+    font-size: 14px; transition: border-color 0.3s; font-family: inherit;
   }
-  .form-group input:focus { border-color: #667eea; outline: none; }
+  .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+    border-color: #667eea; outline: none;
+  }
   .login-btn {
     width: 100%; padding: 14px; background: #667eea; color: #fff; border: none;
     border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer;
@@ -41,6 +43,7 @@
   }
   .header h1 { font-size: 20px; color: #333; }
   .welcome-message { font-size: 14px; color: #667eea; font-weight: 600; }
+  .user-info { font-size: 12px; color: #888; }
   .logout-btn {
     padding: 8px 20px; background: #e74c3c; color: #fff; border: none;
     border-radius: 6px; cursor: pointer; font-size: 13px;
@@ -53,8 +56,8 @@
     box-shadow: 0 2px 12px rgba(0,0,0,0.08); margin-bottom: 24px;
   }
   .add-task-form h2 { font-size: 18px; margin-bottom: 16px; }
-  .form-row { display: flex; gap: 12px; align-items: flex-end; }
-  .form-row .form-group { flex: 1; margin-bottom: 0; }
+  .form-row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+  .form-row .form-group { flex: 1; margin-bottom: 0; min-width: 150px; }
   .add-btn {
     padding: 12px 24px; background: #27ae60; color: #fff; border: none;
     border-radius: 8px; font-size: 14px; cursor: pointer; white-space: nowrap;
@@ -67,19 +70,27 @@
   .task-count { font-size: 14px; color: #888; margin-bottom: 12px; }
   table { width: 100%; border-collapse: collapse; }
   th { background: #f8f9fa; padding: 12px; text-align: left; font-size: 13px; color: #666; border-bottom: 2px solid #eee; }
-  td { padding: 12px; border-bottom: 1px solid #eee; font-size: 14px; }
+  td { padding: 12px; border-bottom: 1px solid #eee; font-size: 14px; vertical-align: middle; }
   .status-badge {
     display: inline-block; padding: 4px 12px; border-radius: 20px;
     font-size: 12px; font-weight: 600;
   }
-  .status-todo { background: #ffeaa7; color: #d68910; }
-  .status-done { background: #d5f5e3; color: #27ae60; }
+  .status-未着手 { background: #ffeaa7; color: #d68910; }
+  .status-進行中 { background: #d6eaf8; color: #2980b9; }
+  .status-完了 { background: #d5f5e3; color: #27ae60; }
+  .priority-高 { color: #e74c3c; font-weight: 600; }
+  .priority-中 { color: #f39c12; }
+  .priority-低 { color: #95a5a6; }
   .delete-btn {
     padding: 6px 14px; background: #e74c3c; color: #fff; border: none;
     border-radius: 4px; cursor: pointer; font-size: 12px;
   }
   .complete-btn {
     padding: 6px 14px; background: #3498db; color: #fff; border: none;
+    border-radius: 4px; cursor: pointer; font-size: 12px; margin-right: 6px;
+  }
+  .progress-btn {
+    padding: 6px 14px; background: #f39c12; color: #fff; border: none;
     border-radius: 4px; cursor: pointer; font-size: 12px; margin-right: 6px;
   }
   .no-tasks { text-align: center; padding: 40px; color: #aaa; }
@@ -116,7 +127,10 @@
   <div class="header">
     <h1>タスク管理</h1>
     <div style="display:flex; align-items:center; gap:16px;">
-      <span class="welcome-message" id="welcome-msg"></span>
+      <div>
+        <span class="welcome-message" id="welcome-msg"></span>
+        <div class="user-info" id="user-info"></div>
+      </div>
       <button class="logout-btn" id="logout-button" onclick="doLogout()">ログアウト</button>
     </div>
   </div>
@@ -138,6 +152,10 @@
             <option value="低">低</option>
           </select>
         </div>
+        <div class="form-group">
+          <label for="task-due">期限</label>
+          <input type="date" id="task-due">
+        </div>
         <button class="add-btn" id="add-task-button" onclick="addTask()">追加</button>
       </div>
     </div>
@@ -152,6 +170,8 @@
             <th>No.</th>
             <th>タスク名</th>
             <th>優先度</th>
+            <th>担当者</th>
+            <th>期限</th>
             <th>ステータス</th>
             <th>操作</th>
           </tr>
@@ -168,73 +188,97 @@
 <div class="success-toast" id="success-toast"></div>
 
 <script>
-// デモ用のユーザー情報
-const USERS = {
-  'admin': 'admin123',
-  'testuser': 'password123'
-};
+let currentUser = null;
 
-let tasks = [];
-let currentUser = '';
-
-function doLogin() {
+// --- 認証 ---
+async function doLogin() {
   const user = document.getElementById('username').value.trim();
   const pass = document.getElementById('password').value;
   const errorEl = document.getElementById('login-error');
 
-  if (USERS[user] && USERS[user] === pass) {
-    currentUser = user;
-    errorEl.style.display = 'none';
-    document.getElementById('login-page').style.display = 'none';
-    document.getElementById('dashboard').style.display = 'block';
-    document.getElementById('welcome-msg').textContent = 'ようこそ、' + user + ' さん';
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: user, password: pass }),
+    });
+    const data = await res.json();
 
-    // 初期タスクを追加
-    tasks = [
-      { name: 'プロジェクト計画書の作成', priority: '高', done: false },
-      { name: 'デザインレビュー', priority: '中', done: false },
-      { name: '議事録の整理', priority: '低', done: true },
-    ];
-    renderTasks();
-  } else {
+    if (data.success) {
+      currentUser = data.user;
+      errorEl.style.display = 'none';
+      document.getElementById('login-page').style.display = 'none';
+      document.getElementById('dashboard').style.display = 'block';
+      document.getElementById('welcome-msg').textContent =
+        'ようこそ、' + currentUser.display_name + ' さん';
+      document.getElementById('user-info').textContent =
+        currentUser.role + ' | ' + currentUser.email;
+      await loadTasks();
+    } else {
+      errorEl.style.display = 'block';
+    }
+  } catch (e) {
+    errorEl.textContent = '通信エラーが発生しました';
     errorEl.style.display = 'block';
   }
 }
 
 function doLogout() {
-  currentUser = '';
-  tasks = [];
+  currentUser = null;
   document.getElementById('dashboard').style.display = 'none';
   document.getElementById('login-page').style.display = 'flex';
   document.getElementById('username').value = '';
   document.getElementById('password').value = '';
 }
 
-function addTask() {
+// --- タスク ---
+async function loadTasks() {
+  const res = await fetch('/api/tasks');
+  const tasks = await res.json();
+  renderTasks(tasks);
+}
+
+async function addTask() {
   const name = document.getElementById('task-name').value.trim();
   const priority = document.getElementById('task-priority').value;
+  const dueDate = document.getElementById('task-due').value || null;
   if (!name) return;
 
-  tasks.push({ name: name, priority: priority, done: false });
+  await fetch('/api/tasks', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      title: name,
+      priority: priority,
+      due_date: dueDate,
+      created_by: currentUser.id,
+      assigned_user_id: currentUser.id,
+    }),
+  });
+
   document.getElementById('task-name').value = '';
-  renderTasks();
+  document.getElementById('task-due').value = '';
+  await loadTasks();
   showToast('タスクを追加しました: ' + name);
 }
 
-function completeTask(index) {
-  tasks[index].done = true;
-  renderTasks();
-  showToast('タスクを完了にしました');
+async function updateStatus(taskId, newStatus) {
+  await fetch('/api/tasks/' + taskId, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: newStatus }),
+  });
+  await loadTasks();
+  showToast('ステータスを「' + newStatus + '」に変更しました');
 }
 
-function deleteTask(index) {
-  const name = tasks[index].name;
-  tasks.splice(index, 1);
-  renderTasks();
-  showToast('タスクを削除しました: ' + name);
+async function deleteTask(taskId, taskName) {
+  await fetch('/api/tasks/' + taskId, { method: 'DELETE' });
+  await loadTasks();
+  showToast('タスクを削除しました: ' + taskName);
 }
 
-function renderTasks() {
+function renderTasks(tasks) {
   const tbody = document.getElementById('task-tbody');
   const noTasks = document.getElementById('no-tasks');
   const countEl = document.getElementById('task-count');
@@ -250,20 +294,32 @@ function renderTasks() {
 
   tasks.forEach(function(task, i) {
     const tr = document.createElement('tr');
+    const statusClass = 'status-' + task.status;
+    const priorityClass = 'priority-' + task.priority;
+
+    let actions = '';
+    if (task.status === '未着手') {
+      actions += '<button class="progress-btn" onclick="updateStatus(' + task.id + ', \'進行中\')">着手</button>';
+    }
+    if (task.status !== '完了') {
+      actions += '<button class="complete-btn" onclick="updateStatus(' + task.id + ', \'完了\')">完了</button>';
+    }
+    actions += '<button class="delete-btn" onclick="deleteTask(' + task.id + ', \'' +
+      escapeHtml(task.title).replace(/'/g, "\\'") + '\')">削除</button>';
+
     tr.innerHTML =
       '<td>' + (i + 1) + '</td>' +
-      '<td class="task-name-cell">' + escapeHtml(task.name) + '</td>' +
-      '<td>' + task.priority + '</td>' +
-      '<td><span class="status-badge ' + (task.done ? 'status-done' : 'status-todo') + '">' +
-        (task.done ? '完了' : '未完了') + '</span></td>' +
-      '<td>' +
-        (task.done ? '' : '<button class="complete-btn" onclick="completeTask(' + i + ')">完了</button>') +
-        '<button class="delete-btn" onclick="deleteTask(' + i + ')">削除</button>' +
-      '</td>';
+      '<td class="task-name-cell">' + escapeHtml(task.title) + '</td>' +
+      '<td class="' + priorityClass + '">' + task.priority + '</td>' +
+      '<td>' + (task.assigned_name || '-') + '</td>' +
+      '<td>' + (task.due_date || '-') + '</td>' +
+      '<td><span class="status-badge ' + statusClass + '">' + task.status + '</span></td>' +
+      '<td>' + actions + '</td>';
     tbody.appendChild(tr);
   });
 }
 
+// --- ユーティリティ ---
 function showToast(msg) {
   const toast = document.getElementById('success-toast');
   toast.textContent = msg;

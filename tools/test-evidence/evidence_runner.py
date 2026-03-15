@@ -243,6 +243,29 @@ async def verify_screen(page, step: TestStep) -> tuple[bool, str]:
     return True, ""
 
 
+def verify_db_sqlite(step: TestStep, db_path: str) -> tuple[bool, str]:
+    """SQLiteデータベースに直接接続してSQLを実行し、結果を検証する."""
+    import sqlite3 as _sqlite3
+
+    if not db_path or not Path(db_path).exists():
+        return False, f"SQLiteデータベースが見つかりません: {db_path}"
+
+    try:
+        conn = _sqlite3.connect(db_path)
+        cursor = conn.execute(step.verify_target)
+        row = cursor.fetchone()
+        conn.close()
+    except Exception as e:
+        return False, f"SQLiteエラー: {e}"
+
+    if row is None:
+        actual = "NULL"
+    else:
+        actual = str(row[0])
+
+    return _match_expected(actual, step.expected)
+
+
 def verify_db_a5m2(step: TestStep, a5m2_cmd: str, a5m2_connect: str) -> tuple[bool, str]:
     """A5M2cmd経由でSQLを実行し、CSV出力された結果を検証する."""
     if not a5m2_cmd:
@@ -410,11 +433,16 @@ async def run_sheet(page, ws, config: ProjectConfig, screenshot_dir: Path,
 
             # 検証
             if step.verify_type == "db":
-                passed, message = verify_db_a5m2(
-                    step,
-                    effective_a5m2_cmd or "",
-                    effective_a5m2_connect or "",
-                )
+                if config.db_type == "sqlite" and config.sqlite_path:
+                    passed, message = verify_db_sqlite(
+                        step, config.sqlite_path,
+                    )
+                else:
+                    passed, message = verify_db_a5m2(
+                        step,
+                        effective_a5m2_cmd or "",
+                        effective_a5m2_connect or "",
+                    )
             elif step.verify_type:
                 passed, message = await verify_screen(page, step)
             else:

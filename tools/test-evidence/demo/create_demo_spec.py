@@ -33,7 +33,7 @@ def create_sheet(wb, sheet_name, test_cases, is_first=False):
     headers = [
         ("A", "No.", 6), ("B", "テスト項目", 30), ("C", "操作種別", 12),
         ("D", "対象セレクタ", 30), ("E", "入力値", 25),
-        ("F", "検証種別", 12), ("G", "検証対象", 30),
+        ("F", "検証種別", 12), ("G", "検証対象", 35),
         ("H", "期待値", 30), ("I", "結果", 8),
         ("J", "エビデンス", 30), ("K", "備考", 25),
     ]
@@ -82,15 +82,11 @@ def main():
             "no": 2, "item": "ユーザー名を入力",
             "action": "input", "selector": "#username",
             "input": "${test_user}",
-            "verify_type": "",
-            "note": "",
         },
         {
             "no": 3, "item": "パスワードを入力",
             "action": "input", "selector": "#password",
             "input": "${test_pass}",
-            "verify_type": "",
-            "note": "",
         },
         {
             "no": 4, "item": "入力状態のスクリーンショット",
@@ -103,7 +99,7 @@ def main():
             "action": "click", "selector": "#login-button",
             "verify_type": "text",
             "verify_target": "#welcome-msg",
-            "expected": "ようこそ、testuser さん",
+            "expected": "contains:テストユーザー",
             "note": "ダッシュボードに遷移し、ウェルカムメッセージが表示されること",
         },
         {
@@ -127,13 +123,29 @@ def main():
             "expected": "contains:3件",
             "note": "初期タスクが3件であること",
         },
+        {
+            "no": 9, "item": "DB: ログイン履歴が記録されていること",
+            "action": "",
+            "verify_type": "db",
+            "verify_target": "SELECT COUNT(*) FROM login_history WHERE user_id = 2 AND success = 1",
+            "expected": "contains:1",
+            "note": "testuser(id=2)のログイン成功が1件記録されていること",
+        },
+        {
+            "no": 10, "item": "DB: ユーザー情報の確認",
+            "action": "",
+            "verify_type": "db",
+            "verify_target": "SELECT display_name FROM users WHERE username = 'testuser'",
+            "expected": "テストユーザー",
+            "note": "testuserの表示名がDBと一致すること",
+        },
     ]
     create_sheet(wb, "ログイン機能", login_cases, is_first=True)
 
     # --- シート2: タスク管理機能 ---
     task_cases = [
         {
-            "no": 1, "item": "ログイン",
+            "no": 1, "item": "ログインページを開く",
             "action": "navigate", "input": "${base_url}",
             "verify_type": "screenshot",
             "note": "前提: ログインページを開く",
@@ -156,21 +168,25 @@ def main():
             "note": "ダッシュボードが表示されること",
         },
         {
-            "no": 5, "item": "タスク名を入力",
+            "no": 5, "item": "DB: 初期タスク件数の確認",
+            "action": "",
+            "verify_type": "db",
+            "verify_target": "SELECT COUNT(*) FROM tasks",
+            "expected": "3",
+            "note": "初期状態のタスクが3件であること",
+        },
+        {
+            "no": 6, "item": "タスク名を入力",
             "action": "input", "selector": "#task-name",
             "input": "テスト自動化の検討",
-            "verify_type": "",
-            "note": "",
         },
         {
-            "no": 6, "item": "優先度を「高」に変更",
+            "no": 7, "item": "優先度を「高」に変更",
             "action": "select", "selector": "#task-priority",
             "input": "高",
-            "verify_type": "",
-            "note": "",
         },
         {
-            "no": 7, "item": "タスク追加ボタンを押下",
+            "no": 8, "item": "タスク追加ボタンを押下",
             "action": "click", "selector": "#add-task-button",
             "verify_type": "text",
             "verify_target": "#task-count",
@@ -178,20 +194,44 @@ def main():
             "note": "タスクが4件に増えること",
         },
         {
-            "no": 8, "item": "追加後のスクリーンショット",
+            "no": 9, "item": "DB: タスクが追加されたことの確認",
+            "action": "",
+            "verify_type": "db",
+            "verify_target": "SELECT COUNT(*) FROM tasks",
+            "expected": "4",
+            "note": "DBにもタスクが4件になっていること",
+        },
+        {
+            "no": 10, "item": "DB: 追加したタスクの内容確認",
+            "action": "",
+            "verify_type": "db",
+            "verify_target": "SELECT title FROM tasks WHERE id = 4",
+            "expected": "テスト自動化の検討",
+            "note": "追加したタスクのタイトルが正しいこと",
+        },
+        {
+            "no": 11, "item": "DB: 追加したタスクの優先度確認",
+            "action": "",
+            "verify_type": "db",
+            "verify_target": "SELECT priority FROM tasks WHERE id = 4",
+            "expected": "高",
+            "note": "追加したタスクの優先度が「高」であること",
+        },
+        {
+            "no": 12, "item": "追加後のスクリーンショット",
             "action": "wait", "input": "500",
             "verify_type": "screenshot",
             "note": "新しいタスクが一覧に表示されていること",
         },
         {
-            "no": 9, "item": "ログアウトボタンを押下",
+            "no": 13, "item": "ログアウトボタンを押下",
             "action": "click", "selector": "#logout-button",
             "verify_type": "visible",
             "verify_target": "#login-page",
             "note": "ログインページに戻ること",
         },
         {
-            "no": 10, "item": "ログアウト後のスクリーンショット",
+            "no": 14, "item": "ログアウト後のスクリーンショット",
             "action": "wait", "input": "500",
             "verify_type": "screenshot",
             "note": "ログインページが表示されていること",
