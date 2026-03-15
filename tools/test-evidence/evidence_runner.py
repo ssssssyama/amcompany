@@ -180,6 +180,9 @@ def _match_expected(actual: str, expected: str) -> tuple[bool, str]:
     - "contains:" → 部分一致
     - "regex:"    → 正規表現マッチ
     - (プレフィックスなし) → 完全一致
+
+    ※ DB検証専用プレフィックス (rowcount: / empty / rows:) は
+      verify_db_sqlite / verify_db_a5m2 内で処理済みのため、ここには来ない。
     """
     if expected.startswith("contains:"):
         pattern = expected[len("contains:"):]
@@ -243,6 +246,76 @@ async def verify_screen(page, step: TestStep) -> tuple[bool, str]:
     return True, ""
 
 
+def _match_db_result(rows: list, columns: list[str], expected: str) -> tuple[bool, str]:
+    """DB検証の期待値照合.
+
+    拡張プレフィックス:
+    - "empty"          → 結果が0行であることを検証
+    - "not_empty"      → 結果が1行以上あることを検証
+    - "rowcount:N"     → 結果がN行であることを検証
+    - "rowcount:>=N"   → 結果がN行以上であることを検証
+    - "rows:col=v,..."  → 各行の指定カラム値を検証（カンマ区切り）
+    - 上記以外          → 1行目1列目の値を _match_expected で照合
+    """
+    if expected == "empty":
+        if len(rows) == 0:
+            return True, "OK: 結果は0行（空）"
+        return False, f"NG: 結果が空ではありません（{len(rows)}行）"
+
+    if expected == "not_empty":
+        if len(rows) > 0:
+            return True, f"OK: 結果は{len(rows)}行（空ではない）"
+        return False, "NG: 結果が空です"
+
+    if expected.startswith("rowcount:"):
+        expr = expected[len("rowcount:"):]
+        actual_count = len(rows)
+
+        # 比較演算子付き: rowcount:>=3, rowcount:<=5, rowcount:>0
+        m = re.match(r"^(>=|<=|>|<)(\d+)$", expr)
+        if m:
+            op, val = m.group(1), int(m.group(2))
+            ops = {">=": actual_count >= val, "<=": actual_count <= val,
+                   ">": actual_count > val, "<": actual_count < val}
+            if ops[op]:
+                return True, f"OK: 行数={actual_count} ({op}{val})"
+            return False, f"NG: 行数={actual_count} (期待: {op}{val})"
+
+        # 数値のみ: rowcount:3
+        expected_count = int(expr)
+        if actual_count == expected_count:
+            return True, f"OK: 行数={actual_count}"
+        return False, f"NG: 行数 期待={expected_count}, 実際={actual_count}"
+
+    if expected.startswith("rows:"):
+        # rows:status=完了,priority=高  → 1行目の指定カラムを検証
+        checks = expected[len("rows:"):]
+        if not rows:
+            return False, "NG: 結果が空です"
+        col_map = {c: i for i, c in enumerate(columns)}
+        errors = []
+        for pair in checks.split(","):
+            col_name, exp_val = pair.split("=", 1)
+            col_name = col_name.strip()
+            exp_val = exp_val.strip()
+            if col_name not in col_map:
+                errors.append(f"カラム'{col_name}'が存在しない")
+                continue
+            actual_val = str(rows[0][col_map[col_name]])
+            if actual_val != exp_val:
+                errors.append(f"{col_name}: 期待='{exp_val}', 実際='{actual_val}'")
+        if errors:
+            return False, "NG: " + "; ".join(errors)
+        return True, f"OK: {checks}"
+
+    # デフォルト: 1行目1列目を比較
+    if not rows:
+        actual = "NULL"
+    else:
+        actual = str(rows[0][0])
+    return _match_expected(actual, expected)
+
+
 def verify_db_sqlite(step: TestStep, db_path: str) -> tuple[bool, str]:
     """SQLiteデータベースに直接接続してSQLを実行し、結果を検証する."""
     import sqlite3 as _sqlite3
@@ -253,17 +326,13 @@ def verify_db_sqlite(step: TestStep, db_path: str) -> tuple[bool, str]:
     try:
         conn = _sqlite3.connect(db_path)
         cursor = conn.execute(step.verify_target)
-        row = cursor.fetchone()
+        columns = [desc[0] for desc in cursor.description] if cursor.description else []
+        rows = cursor.fetchall()
         conn.close()
     except Exception as e:
         return False, f"SQLiteエラー: {e}"
 
-    if row is None:
-        actual = "NULL"
-    else:
-        actual = str(row[0])
-
-    return _match_expected(actual, step.expected)
+    return _match_db_result(rows, columns, step.expected)
 
 
 def verify_db_a5m2(step: TestStep, a5m2_cmd: str, a5m2_connect: str) -> tuple[bool, str]:
@@ -302,15 +371,10 @@ def verify_db_a5m2(step: TestStep, a5m2_cmd: str, a5m2_connect: str) -> tuple[bo
 
         with open(csv_path, encoding="utf-8-sig", newline="") as f:
             reader = csv.reader(f)
-            header = next(reader, None)
-            first_row = next(reader, None)
+            header = next(reader, None) or []
+            rows = [row for row in reader]
 
-        if first_row is None:
-            actual = "NULL"
-        else:
-            actual = first_row[0]
-
-    return _match_expected(actual, step.expected)
+    return _match_db_result(rows, header, step.expected)
 
 
 def resize_screenshot(screenshot_path: Path) -> bytes:
