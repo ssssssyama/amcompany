@@ -27,6 +27,18 @@ agents:
       languages: ["ja", "en"]
       platforms: ["booth", "gumroad"]
 
+  catalog_expander:
+    enabled: true
+    interval: 1800
+    params:
+      max_per_cycle: 5
+
+  packager:
+    enabled: true
+    interval: 3600
+    params:
+      max_per_cycle: 5
+
   seo_content:
     enabled: false
     interval: 14400

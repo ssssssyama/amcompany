@@ -126,3 +126,54 @@ class Catalog:
         for asset in self._assets:
             seen[asset.id] = asset
         return list(seen.values())
+
+    def growth_stats(self) -> dict[str, Any]:
+        """カタログ成長分析レポートを返す。
+
+        ロングテール複利戦略のKPI:
+        - 総商品数 / 出品準備完了数
+        - 商品タイプ別の内訳
+        - クロスリファレンス密度
+        - 推定露出回数（商品数 × 平均タグ数）
+        """
+        self._ensure_loaded()
+        all_assets = self.all_assets
+
+        # 商品タイプ別集計
+        by_product_type: dict[str, int] = {}
+        packaged_count = 0
+        total_tags = 0
+        total_cross_refs = 0
+        total_value = 0.0
+
+        for asset in all_assets:
+            ptype = asset.metadata.get("product_type", asset.agent)
+            by_product_type[ptype] = by_product_type.get(ptype, 0) + 1
+
+            if asset.status in ("packaged", "listed", "sold"):
+                packaged_count += 1
+
+            # パッケージのクロスリファレンス数
+            cross_ref_count = asset.metadata.get("cross_ref_count", 0)
+            total_cross_refs += cross_ref_count
+
+            # タグ数（パッケージのメタデータから）
+            tags = asset.metadata.get("tags_ja", [])
+            total_tags += len(tags) if isinstance(tags, list) else 0
+
+            total_value += asset.estimated_value_yen
+
+        product_count = len(all_assets)
+        avg_cross_refs = (
+            total_cross_refs / product_count if product_count > 0 else 0
+        )
+        avg_tags = total_tags / product_count if product_count > 0 else 0
+
+        return {
+            "total_products": product_count,
+            "packaged_count": packaged_count,
+            "by_product_type": by_product_type,
+            "cross_reference_density": round(avg_cross_refs, 1),
+            "estimated_exposure": int(product_count * max(avg_tags, 1) * 24),
+            "total_estimated_value_yen": total_value,
+        }

@@ -103,6 +103,22 @@ def print_stats(catalog: Catalog) -> None:
             print(f"  {status}: {count}件")
     print()
 
+    # カタログ成長分析
+    growth = catalog.growth_stats()
+    if growth["total_products"] > 0:
+        print("=== カタログ成長レポート ===\n")
+        print(f"総商品数: {growth['total_products']}")
+        print(f"パッケージ済: {growth['packaged_count']}")
+        print(f"クロスリファレンス密度: {growth['cross_reference_density']} (1商品あたり)")
+        print(f"推定月間露出: {growth['estimated_exposure']}回")
+        print()
+
+        if growth["by_product_type"]:
+            print("--- 商品タイプ別 ---")
+            for ptype, count in growth["by_product_type"].items():
+                print(f"  {ptype}: {count}件")
+        print()
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Asset Accumulation Agent Runner")
