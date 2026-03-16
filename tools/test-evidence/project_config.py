@@ -117,6 +117,28 @@ class ProjectConfig:
             return a5m2.get("connect")
         return self.raw.get("db", {}).get("a5m2_connect")
 
+    @property
+    def setup_sql(self) -> str | None:
+        """シート実行前に実行するSQL（SQLite用）."""
+        return self.raw.get("db", {}).get("setup_sql")
+
+    @property
+    def teardown_sql(self) -> str | None:
+        """シート実行後に実行するSQL（SQLite用）."""
+        return self.raw.get("db", {}).get("teardown_sql")
+
+    # --- 出力先設定 ---
+
+    @property
+    def output_dir(self) -> str | None:
+        """エビデンス出力先ディレクトリ."""
+        return self.raw.get("output", {}).get("dir")
+
+    @property
+    def output_timestamp(self) -> bool:
+        """出力ディレクトリにタイムスタンプを付与するか."""
+        return self.raw.get("output", {}).get("timestamp", False)
+
     # --- Excel フォーマット設定 ---
 
     @property

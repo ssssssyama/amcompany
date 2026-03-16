@@ -25,6 +25,10 @@ browser:
 excel:
   data_start_row: 7
   date_cell: "B3"
+  # 「共通ログイン手順」はinclude用なのでシート指定で除外
+  sheets:
+    - "ログイン機能"
+    - "タスク管理機能"
 
 test:
   on_fail: abort
@@ -33,3 +37,12 @@ test:
 db:
   type: sqlite
   path: "demo/demo.db"
+  # setup_sql: シート開始前に実行するSQL（テストデータの初期化等）
+  # setup_sql: "DELETE FROM task_comments; DELETE FROM tasks WHERE id > 3;"
+  # teardown_sql: シート終了後に実行するSQL
+  # teardown_sql: "DELETE FROM login_history;"
+
+# 出力先設定（省略時はテスト仕様書と同じディレクトリ）
+# output:
+#   dir: "evidence"            # 出力先ディレクトリ
+#   timestamp: true            # タイムスタンプ付きサブディレクトリを作成

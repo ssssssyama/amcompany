@@ -147,13 +147,11 @@ def main():
     ]
     create_sheet(wb, "ログイン機能", login_cases, is_first=True)
 
-    # --- シート2: タスク管理機能 ---
-    task_cases = [
+    # --- シート2: 共通ログイン手順（include用） ---
+    common_login_cases = [
         {
             "no": 1, "item": "ログインページを開く",
             "action": "navigate", "input": "${base_url}",
-            "verify_type": "screenshot",
-            "note": "前提: ログインページを開く",
         },
         {
             "no": 2, "item": "ユーザー名入力",
@@ -175,10 +173,20 @@ def main():
             "input": "10000",
             "verify_type": "visible",
             "verify_target": "#dashboard",
-            "note": "wait_for: ダッシュボードが表示されるまで待機",
+        },
+    ]
+    create_sheet(wb, "共通ログイン手順", common_login_cases)
+
+    # --- シート3: タスク管理機能 ---
+    task_cases = [
+        {
+            "no": 1, "item": "共通ログイン手順を実行",
+            "action": "include",
+            "input": "共通ログイン手順",
+            "note": "include: 共通ログイン手順シートのステップを実行",
         },
         {
-            "no": 6, "item": "DB: 初期タスク件数（rowcount検証）",
+            "no": 2, "item": "DB: 初期タスク件数（rowcount検証）",
             "action": "",
             "verify_type": "db",
             "verify_target": "SELECT * FROM tasks",
@@ -186,7 +194,7 @@ def main():
             "note": "rowcount: 初期タスクが3行あること",
         },
         {
-            "no": 7, "item": "DB: 完了タスクが存在する（not_empty検証）",
+            "no": 3, "item": "DB: 完了タスクが存在する（not_empty検証）",
             "action": "",
             "verify_type": "db",
             "verify_target": "SELECT * FROM tasks WHERE status = '完了'",
@@ -194,7 +202,7 @@ def main():
             "note": "not_empty: 完了タスクが1件以上あること",
         },
         {
-            "no": 8, "item": "DB: 削除済みタスクは無い（empty検証）",
+            "no": 4, "item": "DB: 削除済みタスクは無い（empty検証）",
             "action": "",
             "verify_type": "db",
             "verify_target": "SELECT * FROM tasks WHERE title = '存在しないタスク'",
@@ -202,17 +210,17 @@ def main():
             "note": "empty: 存在しない条件の結果が0行であること",
         },
         {
-            "no": 9, "item": "タスク名を入力",
+            "no": 5, "item": "タスク名を入力",
             "action": "input", "selector": "#task-name",
             "input": "テスト自動化の検討",
         },
         {
-            "no": 10, "item": "優先度を「高」に変更",
+            "no": 6, "item": "優先度を「高」に変更",
             "action": "select", "selector": "#task-priority",
             "input": "高",
         },
         {
-            "no": 11, "item": "タスク追加ボタンを押下",
+            "no": 7, "item": "タスク追加ボタンを押下",
             "action": "click", "selector": "#add-task-button",
             "verify_type": "text",
             "verify_target": "#task-count",
@@ -220,7 +228,7 @@ def main():
             "note": "タスクが4件に増えること",
         },
         {
-            "no": 12, "item": "DB: タスク追加後の行数（rowcount検証）",
+            "no": 8, "item": "DB: タスク追加後の行数（rowcount検証）",
             "action": "",
             "verify_type": "db",
             "verify_target": "SELECT * FROM tasks",
@@ -228,7 +236,7 @@ def main():
             "note": "rowcount: 追加後にタスクが4行になっていること",
         },
         {
-            "no": 13, "item": "DB: タスクが1件以上ある（rowcount>=検証）",
+            "no": 9, "item": "DB: タスクが1件以上ある（rowcount>=検証）",
             "action": "",
             "verify_type": "db",
             "verify_target": "SELECT * FROM tasks WHERE priority = '高'",
@@ -236,7 +244,7 @@ def main():
             "note": "rowcount:>=N: 優先度「高」のタスクが1件以上あること",
         },
         {
-            "no": 14, "item": "DB: 追加タスクの複数カラム検証（rows検証）",
+            "no": 10, "item": "DB: 追加タスクの複数カラム検証（rows検証）",
             "action": "",
             "verify_type": "db",
             "verify_target": "SELECT title, priority, status FROM tasks WHERE id = 4",
@@ -244,7 +252,7 @@ def main():
             "note": "rows: 1行の複数カラムを同時検証",
         },
         {
-            "no": 15, "item": "DB: JOIN タスク＋担当者の突き合わせ",
+            "no": 11, "item": "DB: JOIN タスク＋担当者の突き合わせ",
             "action": "",
             "verify_type": "db",
             "verify_target": "SELECT t.title, u.display_name FROM tasks t JOIN users u ON t.assigned_user_id = u.id WHERE t.id = 1",
@@ -252,7 +260,7 @@ def main():
             "note": "rows: JOINで複数テーブルのカラムを同時検証",
         },
         {
-            "no": 16, "item": "DB: rows_any JOIN結果に特定の組み合わせが存在",
+            "no": 12, "item": "DB: rows_any JOIN結果に特定の組み合わせが存在",
             "action": "",
             "verify_type": "db",
             "verify_target": "SELECT t.title, d.name AS dept FROM tasks t JOIN users u ON t.created_by = u.id JOIN departments d ON u.department_id = d.id",
@@ -260,7 +268,7 @@ def main():
             "note": "rows_any: 3テーブルJOINの結果に特定の組み合わせが含まれることを検証",
         },
         {
-            "no": 17, "item": "DB: rows_all 全行が条件を満たす",
+            "no": 13, "item": "DB: rows_all 全行が条件を満たす",
             "action": "",
             "verify_type": "db",
             "verify_target": "SELECT status FROM tasks WHERE priority = '低'",
@@ -268,7 +276,7 @@ def main():
             "note": "rows_all: 低優先度タスクが全て完了であること",
         },
         {
-            "no": 18, "item": "DB: values 部署マスタの網羅確認",
+            "no": 14, "item": "DB: values 部署マスタの網羅確認",
             "action": "",
             "verify_type": "db",
             "verify_target": "SELECT name FROM departments ORDER BY id",
@@ -276,20 +284,20 @@ def main():
             "note": "values: マスタデータの順序付き一覧を検証",
         },
         {
-            "no": 19, "item": "追加後のスクリーンショット",
+            "no": 15, "item": "追加後のスクリーンショット",
             "action": "wait", "input": "500",
             "verify_type": "screenshot",
             "note": "新しいタスクが一覧に表示されていること",
         },
         {
-            "no": 20, "item": "ログアウトボタンを押下",
+            "no": 16, "item": "ログアウトボタンを押下",
             "action": "click", "selector": "#logout-button",
             "verify_type": "visible",
             "verify_target": "#login-page",
             "note": "ログインページに戻ること",
         },
         {
-            "no": 21, "item": "ログアウト後のスクリーンショット",
+            "no": 17, "item": "ログアウト後のスクリーンショット",
             "action": "wait", "input": "500",
             "verify_type": "screenshot",
             "note": "ログインページが表示されていること",

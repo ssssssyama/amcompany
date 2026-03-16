@@ -166,6 +166,10 @@ async def execute_action(page, step: TestStep):
         frame = page.frame_locator(step.selector)
         return frame
 
+    elif action == "include":
+        # 別シートの共通手順を参照実行（run_sheet側で処理するためここではpass）
+        pass
+
     else:
         logger.warning(f"未知の操作種別: {action}")
 
@@ -521,11 +525,13 @@ async def authenticate(page, config: ProjectConfig):
 async def run_sheet(page, ws, config: ProjectConfig, screenshot_dir: Path,
                     effective_a5m2_cmd: str, effective_a5m2_connect: str,
                     sheet_name: str,
-                    step_filter: set[int] | None = None) -> tuple[int, int, int, list]:
+                    step_filter: set[int] | None = None,
+                    wb=None) -> tuple[int, int, int, list]:
     """1シート分のテストを実行する.
 
     Args:
         step_filter: 実行対象のステップNo.集合（Noneなら全ステップ実行）
+        wb: ワークブック（action=includeで別シート参照時に使用）
 
     Returns:
         (ok_count, ng_count, skip_count, ng_details)
@@ -552,6 +558,58 @@ async def run_sheet(page, ws, config: ProjectConfig, screenshot_dir: Path,
         screenshot_path = None
         passed = None
         message = ""
+
+        # action=include: 別シートの共通手順を参照実行
+        if step.action == "include":
+            ref_sheet = step.input_val.strip()
+            if wb is None or ref_sheet not in wb.sheetnames:
+                passed = False
+                message = f"includeエラー: シート '{ref_sheet}' が見つかりません"
+                write_result(ws, col_map, step, passed, message, None, img_w, img_h)
+                elapsed = time.monotonic() - step_start
+                logger.info(f"  [{idx}/{total_steps}] Step {step.no}: [NG] {message} ({elapsed:.1f}s)")
+                ng_details.append({"sheet": sheet_name, "step_no": step.no,
+                                   "item": step.item, "message": message})
+                if on_fail == "abort":
+                    aborted = True
+                continue
+            logger.info(f"  → include: シート '{ref_sheet}' のステップを実行")
+            ref_ws = wb[ref_sheet]
+            ref_steps = read_test_steps(ref_ws, config)
+            for ref_step in ref_steps:
+                try:
+                    if ref_step.action and ref_step.action != "skip":
+                        await execute_action(page, ref_step)
+                    if ref_step.verify_type == "db":
+                        if config.db_type == "sqlite" and config.sqlite_path:
+                            r_passed, r_msg = verify_db_sqlite(ref_step, config.sqlite_path)
+                        else:
+                            r_passed, r_msg = verify_db_a5m2(
+                                ref_step, effective_a5m2_cmd, effective_a5m2_connect)
+                        if not r_passed:
+                            raise RuntimeError(f"include内DB検証NG: {r_msg}")
+                    elif ref_step.verify_type and ref_step.verify_type != "screenshot":
+                        r_passed, r_msg = await verify_screen(page, ref_step)
+                        if not r_passed:
+                            raise RuntimeError(f"include内検証NG: {r_msg}")
+                except Exception as e:
+                    passed = False
+                    message = f"includeエラー ({ref_sheet}): {e}"
+                    write_result(ws, col_map, step, passed, message, None, img_w, img_h)
+                    elapsed = time.monotonic() - step_start
+                    logger.info(f"  [{idx}/{total_steps}] Step {step.no}: [NG] {message} ({elapsed:.1f}s)")
+                    ng_details.append({"sheet": sheet_name, "step_no": step.no,
+                                       "item": step.item, "message": message})
+                    if on_fail == "abort":
+                        aborted = True
+                    break
+            else:
+                passed = True
+                message = f"OK: include '{ref_sheet}' ({len(ref_steps)}ステップ)"
+                write_result(ws, col_map, step, passed, message, None, img_w, img_h)
+                elapsed = time.monotonic() - step_start
+                logger.info(f"  [{idx}/{total_steps}] Step {step.no}: [OK] {message} ({elapsed:.1f}s)")
+            continue
 
         # action=skip: 事前スキップ指定
         if step.action == "skip":
@@ -649,6 +707,18 @@ async def run_sheet(page, ws, config: ProjectConfig, screenshot_dir: Path,
     return ok, ng, skip, ng_details
 
 
+def _run_setup_teardown_sql(db_path: str, sql: str, label: str):
+    """setup_sql / teardown_sql を SQLite に対して実行する."""
+    import sqlite3 as _sqlite3
+    try:
+        conn = _sqlite3.connect(db_path)
+        conn.executescript(sql)
+        conn.close()
+        logger.info(f"  {label}: 実行完了")
+    except Exception as e:
+        logger.warning(f"  {label}: エラー: {e}")
+
+
 def _parse_step_range(step_range: str) -> set[int]:
     """'1-5,10,15-20' 形式のステップ範囲をパースして整数集合を返す."""
     result = set()
@@ -665,16 +735,26 @@ def _parse_step_range(step_range: str) -> set[int]:
 def _validate_spec(wb, config: ProjectConfig, target_sheets: list[str]) -> list[str]:
     """テスト仕様書の形式チェック（ドライラン）.
 
+    基本的な構文チェックに加え、以下の拡張チェックも実行する:
+    - action=include の参照先シート存在確認
+    - verify_type=db のSQL構文チェック（SQLite接続可能時のみ）
+    - 期待値プレフィックスの妥当性チェック
+
     Returns:
         エラーメッセージのリスト（空なら問題なし）
     """
     valid_actions = {
         "navigate", "click", "input", "select", "wait", "wait_for",
         "upload", "hover", "scroll", "keyboard",
-        "alert_accept", "alert_dismiss", "iframe", "skip", "",
+        "alert_accept", "alert_dismiss", "iframe", "include", "skip", "",
     }
     valid_verify_types = {
         "text", "value", "visible", "hidden", "url", "screenshot", "db", "",
+    }
+    valid_expected_prefixes = {
+        "contains:", "regex:",
+        "empty", "not_empty",
+        "rowcount:", "rows:", "rows_any:", "rows_all:", "values:",
     }
     errors = []
 
@@ -699,6 +779,45 @@ def _validate_spec(wb, config: ProjectConfig, target_sheets: list[str]) -> list[
                 errors.append(f"{prefix}: verify_type='{step.verify_type}' に検証対象が未指定")
             if step.verify_type == "db" and not step.verify_target:
                 errors.append(f"{prefix}: verify_type='db' にSQLが未指定")
+
+            # include: 参照先シートの存在確認
+            if step.action == "include":
+                ref_sheet = step.input_val.strip()
+                if not ref_sheet:
+                    errors.append(f"{prefix}: action='include' にシート名が未指定")
+                elif ref_sheet not in wb.sheetnames:
+                    errors.append(f"{prefix}: include先シート '{ref_sheet}' が存在しません")
+
+            # DB検証: SQL構文チェック（SQLite利用時のみ）
+            if step.verify_type == "db" and step.verify_target:
+                if config.db_type == "sqlite" and config.sqlite_path:
+                    import sqlite3 as _sqlite3
+                    db_path = config.sqlite_path
+                    if Path(db_path).exists():
+                        try:
+                            conn = _sqlite3.connect(db_path)
+                            conn.execute(f"EXPLAIN {step.verify_target}")
+                            conn.close()
+                        except _sqlite3.Error as e:
+                            errors.append(f"{prefix}: SQL構文エラー: {e}")
+
+            # 期待値プレフィックスの妥当性チェック
+            if step.expected:
+                exp = step.expected
+                has_valid_prefix = False
+                # プレフィックスなし（完全一致）も有効
+                if not any(exp.startswith(p) for p in valid_expected_prefixes):
+                    # 完全一致として扱う → 常に有効
+                    has_valid_prefix = True
+                else:
+                    has_valid_prefix = True
+                # DB検証で画面系プレフィックスを使っている場合は警告
+                if step.verify_type == "db" and exp.startswith("regex:"):
+                    errors.append(
+                        f"{prefix}: verify_type='db' に 'regex:' プレフィックスは"
+                        "使用できません（1行目1列目の正規表現マッチは対応していますが意図的ですか？）"
+                    )
+
     return errors
 
 
@@ -710,6 +829,7 @@ async def run_tests(spec_path: str, output_path: str | None = None,
                     sheets: list[str] | None = None,
                     step_range: str | None = None,
                     dry_run: bool = False,
+                    verify_selectors: bool = False,
                     json_report: str | None = None):
     """テスト仕様書を実行してエビデンスを生成する.
 
@@ -723,14 +843,25 @@ async def run_tests(spec_path: str, output_path: str | None = None,
         sheets: 実行対象のシート名リスト（省略時は設定ファイルの指定またはデフォルト）
         step_range: 実行対象のステップ範囲（例: '10-15,20'）
         dry_run: Trueなら形式チェックのみ（ブラウザ起動なし）
+        verify_selectors: Trueならブラウザを起動してセレクタの存在を確認する
         json_report: JSON結果レポートの出力先パス
     """
     # プロジェクト設定を読み込み
     config = ProjectConfig(config_path)
 
     spec_path = Path(spec_path)
+
+    # 出力先ディレクトリの決定（設定ファイル > デフォルト）
     if output_path is None:
-        output_path = spec_path.parent / f"{spec_path.stem}_evidence{spec_path.suffix}"
+        out_dir = config.output_dir
+        if out_dir:
+            out_dir = Path(out_dir)
+            if config.output_timestamp:
+                out_dir = out_dir / datetime.now().strftime("%Y%m%d_%H%M%S")
+            out_dir.mkdir(parents=True, exist_ok=True)
+            output_path = out_dir / f"{spec_path.stem}_evidence{spec_path.suffix}"
+        else:
+            output_path = spec_path.parent / f"{spec_path.stem}_evidence{spec_path.suffix}"
     output_path = Path(output_path)
 
     # ログファイル設定
@@ -764,6 +895,60 @@ async def run_tests(spec_path: str, output_path: str | None = None,
         else:
             logger.info("ドライラン結果: エラーなし")
         return (0, 0, 0) if errors else (1, 0, 0)
+
+    # セレクタ検証モード: ブラウザを起動して各セレクタの存在を確認
+    if verify_selectors:
+        logger.info("セレクタ検証モード: 各ステップのセレクタを確認")
+        selector_errors = []
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=headless)
+            context = await browser.new_context(
+                viewport=config.viewport, locale=config.locale,
+                ignore_https_errors=config.ignore_https_errors,
+            )
+            if config.timeout:
+                context.set_default_timeout(config.timeout)
+            page = await context.new_page()
+
+            if config.auth_type != "none":
+                await authenticate(page, config)
+
+            for sname in target_sheets:
+                if sname not in wb.sheetnames:
+                    continue
+                steps = read_test_steps(wb[sname], config)
+                current_url = None
+                for step in steps:
+                    # navigateでページ遷移
+                    if step.action == "navigate" and step.input_val:
+                        try:
+                            await page.goto(step.input_val, wait_until="networkidle")
+                            current_url = step.input_val
+                        except Exception as e:
+                            selector_errors.append(
+                                f"[{sname}] Step {step.no}: navigate失敗: {e}")
+                        continue
+                    # セレクタを持つステップの検証
+                    sel = step.selector or (
+                        step.verify_target if step.verify_type in (
+                            "text", "value", "visible", "hidden") else "")
+                    if sel and current_url:
+                        element = await page.query_selector(sel)
+                        if element is None:
+                            selector_errors.append(
+                                f"[{sname}] Step {step.no}: セレクタ '{sel}' が見つかりません")
+                        else:
+                            logger.info(f"  [{sname}] Step {step.no}: '{sel}' → OK")
+
+            await browser.close()
+
+        if selector_errors:
+            for err in selector_errors:
+                logger.error(f"  {err}")
+            logger.info(f"セレクタ検証結果: {len(selector_errors)} 件のエラー")
+        else:
+            logger.info("セレクタ検証結果: 全セレクタOK")
+        return (0, 0, 0) if selector_errors else (1, 0, 0)
 
     # ステップ範囲フィルタ
     step_filter = _parse_step_range(step_range) if step_range else None
@@ -820,15 +1005,23 @@ async def run_tests(spec_path: str, output_path: str | None = None,
             if date_cell:
                 ws[date_cell] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+            # setup_sql: シート実行前にSQLを実行（SQLite利用時のみ）
+            if config.setup_sql and config.db_type == "sqlite" and config.sqlite_path:
+                _run_setup_teardown_sql(config.sqlite_path, config.setup_sql, "setup_sql")
+
             ok, ng, skip, ng_details = await run_sheet(
                 page, ws, config, screenshot_dir,
                 effective_a5m2_cmd, effective_a5m2_connect,
-                sheet_name, step_filter,
+                sheet_name, step_filter, wb=wb,
             )
             total_ok += ok
             total_ng += ng
             total_skip += skip
             all_ng_details.extend(ng_details)
+
+            # teardown_sql: シート実行後にSQLを実行（SQLite利用時のみ）
+            if config.teardown_sql and config.db_type == "sqlite" and config.sqlite_path:
+                _run_setup_teardown_sql(config.sqlite_path, config.teardown_sql, "teardown_sql")
 
             logger.info(f"[{sheet_name}] 結果: {ok} OK, {ng} NG, {skip} SKIP")
 
@@ -928,6 +1121,10 @@ def main():
         help="仕様書の形式チェックのみ実行（ブラウザ起動なし）",
     )
     parser.add_argument(
+        "--verify-selectors", action="store_true",
+        help="ブラウザを起動して各ステップのセレクタ存在を事前確認",
+    )
+    parser.add_argument(
         "--json-report",
         help="JSON結果レポートの出力先パス",
     )
@@ -943,6 +1140,7 @@ def main():
         sheets=args.sheets,
         step_range=args.steps,
         dry_run=args.dry_run,
+        verify_selectors=args.verify_selectors,
         json_report=args.json_report,
     ))
 
