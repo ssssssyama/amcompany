@@ -254,7 +254,10 @@ def _match_db_result(rows: list, columns: list[str], expected: str) -> tuple[boo
     - "not_empty"      → 結果が1行以上あることを検証
     - "rowcount:N"     → 結果がN行であることを検証
     - "rowcount:>=N"   → 結果がN行以上であることを検証
-    - "rows:col=v,..."  → 各行の指定カラム値を検証（カンマ区切り）
+    - "rows:col=v,..."  → 1行目の指定カラム値を検証（カンマ区切り）
+    - "rows_any:col=v,..." → いずれかの行が条件を満たすことを検証
+    - "rows_all:col=v,..." → 全行が条件を満たすことを検証
+    - "values:v1,v2,..."   → 1列目の全値リストを順序付きで検証
     - 上記以外          → 1行目1列目の値を _match_expected で照合
     """
     if expected == "empty":
@@ -307,6 +310,54 @@ def _match_db_result(rows: list, columns: list[str], expected: str) -> tuple[boo
         if errors:
             return False, "NG: " + "; ".join(errors)
         return True, f"OK: {checks}"
+
+    if expected.startswith("rows_any:"):
+        # rows_any:col=v,...  → いずれかの行が全条件を満たせばOK
+        checks = expected[len("rows_any:"):]
+        if not rows:
+            return False, "NG: 結果が空です"
+        col_map = {c: i for i, c in enumerate(columns)}
+        pairs = []
+        for pair in checks.split(","):
+            col_name, exp_val = pair.split("=", 1)
+            col_name = col_name.strip()
+            exp_val = exp_val.strip()
+            if col_name not in col_map:
+                return False, f"NG: カラム'{col_name}'が存在しない"
+            pairs.append((col_name, col_map[col_name], exp_val))
+        for row in rows:
+            if all(str(row[idx]) == exp_val for _, idx, exp_val in pairs):
+                return True, f"OK: 条件に一致する行あり ({checks})"
+        return False, f"NG: 条件を満たす行がありません ({checks}, {len(rows)}行中)"
+
+    if expected.startswith("rows_all:"):
+        # rows_all:col=v,...  → 全行が条件を満たすことを検証
+        checks = expected[len("rows_all:"):]
+        if not rows:
+            return False, "NG: 結果が空です"
+        col_map = {c: i for i, c in enumerate(columns)}
+        pairs = []
+        for pair in checks.split(","):
+            col_name, exp_val = pair.split("=", 1)
+            col_name = col_name.strip()
+            exp_val = exp_val.strip()
+            if col_name not in col_map:
+                return False, f"NG: カラム'{col_name}'が存在しない"
+            pairs.append((col_name, col_map[col_name], exp_val))
+        for i, row in enumerate(rows):
+            for col_name, idx, exp_val in pairs:
+                actual_val = str(row[idx])
+                if actual_val != exp_val:
+                    return False, f"NG: 行{i + 1} {col_name}: 期待='{exp_val}', 実際='{actual_val}'"
+        return True, f"OK: 全{len(rows)}行が条件を満たす ({checks})"
+
+    if expected.startswith("values:"):
+        # values:v1,v2,...  → 1列目の全値リストを順序付きで検証
+        expected_values = [v.strip() for v in expected[len("values:"):].split(",")]
+        actual_values = [str(row[0]) for row in rows]
+        if actual_values == expected_values:
+            return True, f"OK: values={','.join(actual_values)}"
+        return False, f"NG: 期待={expected_values}, 実際={actual_values}"
 
     # デフォルト: 1行目1列目を比較
     if not rows:
