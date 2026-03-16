@@ -7,12 +7,15 @@ Excel仕様書を読み取り、Playwrightでブラウザ操作を実行し、
 import asyncio
 import csv
 import io
+import json
 import logging
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
+import traceback
 from datetime import datetime
 from pathlib import Path
 
@@ -35,8 +38,8 @@ NG_FONT = Font(name="Yu Gothic", size=10, bold=True, color="9C0006")
 SKIP_FILL = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
 SKIP_FONT = Font(name="Yu Gothic", size=10, color="9C6500")
 
-EVIDENCE_IMG_WIDTH = 400
-EVIDENCE_IMG_HEIGHT = 250
+EVIDENCE_IMG_WIDTH_DEFAULT = 400
+EVIDENCE_IMG_HEIGHT_DEFAULT = 250
 
 
 class TestStep:
@@ -119,8 +122,18 @@ async def execute_action(page, step: TestStep):
         await asyncio.sleep(ms / 1000)
 
     elif action == "wait_for":
-        timeout = int(step.input_val) if step.input_val else 30000
-        await page.wait_for_selector(step.selector, state="visible", timeout=timeout)
+        # input欄に "hidden:10000" と書くと state="hidden" で待機
+        wait_state = "visible"
+        wait_timeout = 30000
+        if step.input_val:
+            if step.input_val.startswith("hidden"):
+                wait_state = "hidden"
+                parts = step.input_val.split(":", 1)
+                if len(parts) == 2 and parts[1].strip().isdigit():
+                    wait_timeout = int(parts[1].strip())
+            elif step.input_val.isdigit():
+                wait_timeout = int(step.input_val)
+        await page.wait_for_selector(step.selector, state=wait_state, timeout=wait_timeout)
 
     elif action == "upload":
         await page.set_input_files(step.selector, step.input_val)
@@ -428,17 +441,21 @@ def verify_db_a5m2(step: TestStep, a5m2_cmd: str, a5m2_connect: str) -> tuple[bo
     return _match_db_result(rows, header, step.expected)
 
 
-def resize_screenshot(screenshot_path: Path) -> bytes:
+def resize_screenshot(screenshot_path: Path,
+                      width: int = EVIDENCE_IMG_WIDTH_DEFAULT,
+                      height: int = EVIDENCE_IMG_HEIGHT_DEFAULT) -> bytes:
     """スクリーンショットをエビデンス用にリサイズする."""
     with PILImage.open(screenshot_path) as img:
-        img.thumbnail((EVIDENCE_IMG_WIDTH, EVIDENCE_IMG_HEIGHT))
+        img.thumbnail((width, height))
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         return buf.getvalue()
 
 
 def write_result(ws, col_map: dict, step: TestStep, passed: bool | None,
-                 message: str, screenshot_path: Path | None):
+                 message: str, screenshot_path: Path | None,
+                 img_width: int = EVIDENCE_IMG_WIDTH_DEFAULT,
+                 img_height: int = EVIDENCE_IMG_HEIGHT_DEFAULT):
     """検証結果とエビデンスをExcelに書き込む."""
     result_cell = ws[f"{col_map['result']}{step.row}"]
     evidence_col = col_map["evidence"]
@@ -464,13 +481,13 @@ def write_result(ws, col_map: dict, step: TestStep, passed: bool | None,
 
     # スクリーンショットをエビデンス列に貼付
     if screenshot_path and screenshot_path.exists():
-        img_data = resize_screenshot(screenshot_path)
+        img_data = resize_screenshot(screenshot_path, img_width, img_height)
         img_stream = io.BytesIO(img_data)
         img = ExcelImage(img_stream)
-        img.width = EVIDENCE_IMG_WIDTH
-        img.height = EVIDENCE_IMG_HEIGHT
+        img.width = img_width
+        img.height = img_height
         ws.add_image(img, f"{evidence_col}{step.row}")
-        ws.row_dimensions[step.row].height = EVIDENCE_IMG_HEIGHT * 0.75
+        ws.row_dimensions[step.row].height = img_height * 0.75
 
 
 async def authenticate(page, config: ProjectConfig):
@@ -503,36 +520,65 @@ async def authenticate(page, config: ProjectConfig):
 
 async def run_sheet(page, ws, config: ProjectConfig, screenshot_dir: Path,
                     effective_a5m2_cmd: str, effective_a5m2_connect: str,
-                    sheet_name: str) -> tuple[int, int, int]:
+                    sheet_name: str,
+                    step_filter: set[int] | None = None) -> tuple[int, int, int, list]:
     """1シート分のテストを実行する.
 
+    Args:
+        step_filter: 実行対象のステップNo.集合（Noneなら全ステップ実行）
+
     Returns:
-        (ok_count, ng_count, skip_count)
+        (ok_count, ng_count, skip_count, ng_details)
     """
     col_map = config.excel_columns
     on_fail = config.on_fail
+    img_w = config.screenshot_width
+    img_h = config.screenshot_height
 
     steps = read_test_steps(ws, config)
     if not steps:
         logger.info(f"[{sheet_name}] テストステップが見つかりません。")
-        return 0, 0, 0
+        return 0, 0, 0, []
 
-    logger.info(f"[{sheet_name}] {len(steps)} ステップを実行")
+    total_steps = len(steps)
+    logger.info(f"[{sheet_name}] {total_steps} ステップを実行")
 
     aborted = False
-    for step in steps:
-        logger.info(f"  Step {step.no}: {step.item}...")
+    ng_details = []  # NG一覧を収集
+    for idx, step in enumerate(steps, 1):
+        step_start = time.monotonic()
+        logger.info(f"  [{idx}/{total_steps}] Step {step.no}: {step.item}...")
 
         screenshot_path = None
         passed = None
         message = ""
 
+        # action=skip: 事前スキップ指定
+        if step.action == "skip":
+            passed = None
+            message = "スキップ指定 (action=skip)"
+            write_result(ws, col_map, step, passed, message, None, img_w, img_h)
+            elapsed = time.monotonic() - step_start
+            logger.info(f"  [{idx}/{total_steps}] Step {step.no}: [SKIP] {message} ({elapsed:.1f}s)")
+            continue
+
+        # --steps フィルタによるスキップ
+        if step_filter is not None:
+            step_no_int = int(step.no) if str(step.no).isdigit() else None
+            if step_no_int is None or step_no_int not in step_filter:
+                passed = None
+                message = "範囲外 (--steps フィルタ)"
+                write_result(ws, col_map, step, passed, message, None, img_w, img_h)
+                elapsed = time.monotonic() - step_start
+                logger.info(f"  [{idx}/{total_steps}] Step {step.no}: [SKIP] {message} ({elapsed:.1f}s)")
+                continue
+
         if aborted:
-            # 前ステップで中断が決まった場合、残りはSKIP
             passed = None
             message = "前ステップのNG/エラーにより中断"
-            write_result(ws, col_map, step, passed, message, None)
-            logger.info(f"  Step {step.no}: [SKIP] {message}")
+            write_result(ws, col_map, step, passed, message, None, img_w, img_h)
+            elapsed = time.monotonic() - step_start
+            logger.info(f"  [{idx}/{total_steps}] Step {step.no}: [SKIP] {message} ({elapsed:.1f}s)")
             continue
 
         try:
@@ -567,6 +613,7 @@ async def run_sheet(page, ws, config: ProjectConfig, screenshot_dir: Path,
         except Exception as e:
             passed = False
             message = f"エラー: {e}"
+            logger.debug(f"  Step {step.no} 例外詳細:\n{traceback.format_exc()}")
             try:
                 screenshot_path = await take_screenshot(
                     page, screenshot_dir, f"{sheet_name}_{step.no}_error",
@@ -575,10 +622,20 @@ async def run_sheet(page, ws, config: ProjectConfig, screenshot_dir: Path,
                 pass
 
         # 結果をExcelに書き込み
-        write_result(ws, col_map, step, passed, message, screenshot_path)
+        write_result(ws, col_map, step, passed, message, screenshot_path, img_w, img_h)
 
+        elapsed = time.monotonic() - step_start
         status = "OK" if passed else ("NG" if passed is False else "SKIP")
-        logger.info(f"  Step {step.no}: [{status}] {message}")
+        logger.info(f"  [{idx}/{total_steps}] Step {step.no}: [{status}] {message} ({elapsed:.1f}s)")
+
+        # NG情報を収集
+        if passed is False:
+            ng_details.append({
+                "sheet": sheet_name,
+                "step_no": step.no,
+                "item": step.item,
+                "message": message,
+            })
 
         # NG時の制御
         if passed is False and on_fail == "abort":
@@ -589,7 +646,60 @@ async def run_sheet(page, ws, config: ProjectConfig, screenshot_dir: Path,
     ok = sum(1 for s in steps if ws[f"{col_map['result']}{s.row}"].value == "OK")
     ng = sum(1 for s in steps if ws[f"{col_map['result']}{s.row}"].value == "NG")
     skip = sum(1 for s in steps if ws[f"{col_map['result']}{s.row}"].value == "SKIP")
-    return ok, ng, skip
+    return ok, ng, skip, ng_details
+
+
+def _parse_step_range(step_range: str) -> set[int]:
+    """'1-5,10,15-20' 形式のステップ範囲をパースして整数集合を返す."""
+    result = set()
+    for part in step_range.split(","):
+        part = part.strip()
+        if "-" in part:
+            start, end = part.split("-", 1)
+            result.update(range(int(start), int(end) + 1))
+        else:
+            result.add(int(part))
+    return result
+
+
+def _validate_spec(wb, config: ProjectConfig, target_sheets: list[str]) -> list[str]:
+    """テスト仕様書の形式チェック（ドライラン）.
+
+    Returns:
+        エラーメッセージのリスト（空なら問題なし）
+    """
+    valid_actions = {
+        "navigate", "click", "input", "select", "wait", "wait_for",
+        "upload", "hover", "scroll", "keyboard",
+        "alert_accept", "alert_dismiss", "iframe", "skip", "",
+    }
+    valid_verify_types = {
+        "text", "value", "visible", "hidden", "url", "screenshot", "db", "",
+    }
+    errors = []
+
+    for sheet_name in target_sheets:
+        if sheet_name not in wb.sheetnames:
+            errors.append(f"[{sheet_name}] シートが存在しません")
+            continue
+        ws = wb[sheet_name]
+        steps = read_test_steps(ws, config)
+        for step in steps:
+            prefix = f"[{sheet_name}] Step {step.no}"
+            if step.action and step.action not in valid_actions:
+                errors.append(f"{prefix}: 無効な操作種別 '{step.action}'")
+            if step.verify_type and step.verify_type not in valid_verify_types:
+                errors.append(f"{prefix}: 無効な検証種別 '{step.verify_type}'")
+            if step.action in ("click", "input", "select", "hover", "wait_for",
+                               "upload", "iframe") and not step.selector:
+                errors.append(f"{prefix}: action='{step.action}' にセレクタが未指定")
+            if step.action == "navigate" and not step.input_val:
+                errors.append(f"{prefix}: action='navigate' にURLが未指定")
+            if step.verify_type in ("text", "value", "visible", "hidden") and not step.verify_target:
+                errors.append(f"{prefix}: verify_type='{step.verify_type}' に検証対象が未指定")
+            if step.verify_type == "db" and not step.verify_target:
+                errors.append(f"{prefix}: verify_type='db' にSQLが未指定")
+    return errors
 
 
 async def run_tests(spec_path: str, output_path: str | None = None,
@@ -597,7 +707,10 @@ async def run_tests(spec_path: str, output_path: str | None = None,
                     a5m2_cmd: str | None = None,
                     a5m2_connect: str | None = None,
                     headless: bool = True,
-                    sheets: list[str] | None = None):
+                    sheets: list[str] | None = None,
+                    step_range: str | None = None,
+                    dry_run: bool = False,
+                    json_report: str | None = None):
     """テスト仕様書を実行してエビデンスを生成する.
 
     Args:
@@ -608,6 +721,9 @@ async def run_tests(spec_path: str, output_path: str | None = None,
         a5m2_connect: A5M2の接続文字列（設定ファイルより優先）
         headless: ヘッドレスモードで実行するか
         sheets: 実行対象のシート名リスト（省略時は設定ファイルの指定またはデフォルト）
+        step_range: 実行対象のステップ範囲（例: '10-15,20'）
+        dry_run: Trueなら形式チェックのみ（ブラウザ起動なし）
+        json_report: JSON結果レポートの出力先パス
     """
     # プロジェクト設定を読み込み
     config = ProjectConfig(config_path)
@@ -637,6 +753,23 @@ async def run_tests(spec_path: str, output_path: str | None = None,
 
     logger.info(f"対象シート: {target_sheets}")
 
+    # ドライラン: 形式チェックのみ
+    if dry_run:
+        logger.info("ドライラン: 仕様書の形式チェックを実行")
+        errors = _validate_spec(wb, config, target_sheets)
+        if errors:
+            for err in errors:
+                logger.error(f"  {err}")
+            logger.info(f"ドライラン結果: {len(errors)} 件のエラー")
+        else:
+            logger.info("ドライラン結果: エラーなし")
+        return (0, 0, 0) if errors else (1, 0, 0)
+
+    # ステップ範囲フィルタ
+    step_filter = _parse_step_range(step_range) if step_range else None
+    if step_filter:
+        logger.info(f"ステップフィルタ: {sorted(step_filter)}")
+
     # スクリーンショット保存ディレクトリ
     screenshot_dir = output_path.parent / "screenshots"
     screenshot_dir.mkdir(exist_ok=True)
@@ -661,6 +794,7 @@ async def run_tests(spec_path: str, output_path: str | None = None,
 
     # ブラウザ起動
     total_ok = total_ng = total_skip = 0
+    all_ng_details = []
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=headless)
@@ -686,14 +820,15 @@ async def run_tests(spec_path: str, output_path: str | None = None,
             if date_cell:
                 ws[date_cell] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-            ok, ng, skip = await run_sheet(
+            ok, ng, skip, ng_details = await run_sheet(
                 page, ws, config, screenshot_dir,
                 effective_a5m2_cmd, effective_a5m2_connect,
-                sheet_name,
+                sheet_name, step_filter,
             )
             total_ok += ok
             total_ng += ng
             total_skip += skip
+            all_ng_details.extend(ng_details)
 
             logger.info(f"[{sheet_name}] 結果: {ok} OK, {ng} NG, {skip} SKIP")
 
@@ -705,7 +840,34 @@ async def run_tests(spec_path: str, output_path: str | None = None,
 
     total = total_ok + total_ng + total_skip
     logger.info(f"全体結果: {total_ok}/{total} OK, {total_ng}/{total} NG, {total_skip}/{total} SKIP")
+
+    # NG一覧をまとめて出力
+    if all_ng_details:
+        logger.info("--- NG一覧 ---")
+        for ng_item in all_ng_details:
+            logger.info(f"  [{ng_item['sheet']}] Step {ng_item['step_no']}: "
+                        f"{ng_item['item']} → {ng_item['message']}")
+        logger.info(f"--- NG {len(all_ng_details)} 件 ---")
+
     logger.info(f"ログ: {log_path}")
+
+    # JSON結果レポート出力
+    if json_report:
+        report = {
+            "spec": str(spec_path),
+            "output": str(output_path),
+            "timestamp": datetime.now().isoformat(),
+            "summary": {
+                "total": total, "ok": total_ok,
+                "ng": total_ng, "skip": total_skip,
+            },
+            "ng_details": all_ng_details,
+        }
+        Path(json_report).write_text(
+            json.dumps(report, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        logger.info(f"JSONレポート: {json_report}")
 
     return total_ok, total_ng, total_skip
 
@@ -757,6 +919,18 @@ def main():
         help="A5M2の接続文字列（設定ファイルより優先）",
     )
     parser.add_argument("--headed", action="store_true", help="ブラウザを表示して実行")
+    parser.add_argument(
+        "--steps",
+        help="実行対象のステップ範囲（例: '1-5,10,15-20'）",
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="仕様書の形式チェックのみ実行（ブラウザ起動なし）",
+    )
+    parser.add_argument(
+        "--json-report",
+        help="JSON結果レポートの出力先パス",
+    )
 
     args = parser.parse_args()
     asyncio.run(run_tests(
@@ -767,6 +941,9 @@ def main():
         a5m2_connect=args.a5m2_connect,
         headless=not args.headed,
         sheets=args.sheets,
+        step_range=args.steps,
+        dry_run=args.dry_run,
+        json_report=args.json_report,
     ))
 
 

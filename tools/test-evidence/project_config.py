@@ -144,6 +144,18 @@ class ProjectConfig:
         """実行対象シート名のリスト（空の場合は全シート）."""
         return self.raw.get("excel", {}).get("sheets", [])
 
+    # --- エビデンス画像設定 ---
+
+    @property
+    def screenshot_width(self) -> int:
+        """エビデンス画像の幅（ピクセル）."""
+        return self.raw.get("evidence", {}).get("screenshot_width", 400)
+
+    @property
+    def screenshot_height(self) -> int:
+        """エビデンス画像の高さ（ピクセル）."""
+        return self.raw.get("evidence", {}).get("screenshot_height", 250)
+
     # --- テスト実行制御 ---
 
     @property
