@@ -7,4 +7,7 @@
     <string name="status_enabled">Active — waiting for incoming calls</string>
     <string name="status_disabled">Disabled</string>
     <string name="open_settings">Open App Settings</string>
+    <string name="channel_name">Incoming Call Search</string>
+    <string name="channel_description">Notifications for searching incoming phone numbers</string>
+    <string name="notification_text">Tap to search on Google</string>
 </resources>

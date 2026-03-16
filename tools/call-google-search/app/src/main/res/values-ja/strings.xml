@@ -7,4 +7,7 @@
     <string name="status_enabled">有効 — 着信を待機中</string>
     <string name="status_disabled">無効</string>
     <string name="open_settings">アプリ設定を開く</string>
+    <string name="channel_name">着信番号検索</string>
+    <string name="channel_description">着信番号をGoogle検索するための通知</string>
+    <string name="notification_text">タップしてGoogleで検索</string>
 </resources>
