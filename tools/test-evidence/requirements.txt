@@ -1,4 +1,4 @@
-playwright
-openpyxl
-Pillow
-pyyaml
+playwright>=1.49,<2.0
+openpyxl>=3.1,<4.0
+Pillow>=10.0,<13.0
+pyyaml>=6.0,<7.0

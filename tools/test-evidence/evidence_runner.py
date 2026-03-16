@@ -1027,7 +1027,14 @@ async def run_tests(spec_path: str, output_path: str | None = None,
 
         await browser.close()
 
-    # ワークブックを保存
+    # ワークブックを保存（既存ファイルがある場合はバックアップ）
+    if output_path.exists():
+        backup_path = output_path.parent / f"{output_path.stem}_backup{output_path.suffix}"
+        try:
+            shutil.copy2(output_path, backup_path)
+            logger.debug(f"バックアップを作成: {backup_path}")
+        except OSError as e:
+            logger.warning(f"バックアップ作成に失敗（続行します）: {e}")
     wb.save(str(output_path))
     logger.info(f"エビデンスを保存しました: {output_path}")
 
@@ -1066,7 +1073,12 @@ async def run_tests(spec_path: str, output_path: str | None = None,
 
 
 def _setup_logging(log_path: Path):
-    """コンソール + ファイルの両方にログを出力する."""
+    """コンソール + ファイルの両方にログを出力する.
+
+    ログファイルは追記モード（append）で、5MB超過時に最大3世代ローテーションする。
+    """
+    from logging.handlers import RotatingFileHandler
+
     logger.setLevel(logging.DEBUG)
     # 既存ハンドラをクリア（多重追加防止）
     logger.handlers.clear()
@@ -1080,8 +1092,11 @@ def _setup_logging(log_path: Path):
     console.setFormatter(fmt)
     logger.addHandler(console)
 
-    # ファイル出力
-    file_handler = logging.FileHandler(str(log_path), encoding="utf-8", mode="w")
+    # ファイル出力（ローテーション: 5MB x 3世代）
+    file_handler = RotatingFileHandler(
+        str(log_path), encoding="utf-8", mode="a",
+        maxBytes=5 * 1024 * 1024, backupCount=3,
+    )
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(fmt)
     logger.addHandler(file_handler)

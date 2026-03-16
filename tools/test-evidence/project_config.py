@@ -2,8 +2,14 @@
 
 YAMLファイルからプロジェクト固有の設定（環境情報・認証・ブラウザ設定等）を読み込む。
 Excelテスト仕様書内の変数（${変数名}）を設定値で置換する機能を提供する。
+
+変数置換:
+    ${変数名}       → environment.variables.変数名
+    ${base_url}     → environment.base_url
+    ${env:変数名}   → 環境変数から取得（未設定時はエラー）
 """
 
+import os
 import re
 from pathlib import Path
 
@@ -195,8 +201,9 @@ class ProjectConfig:
         """テキスト内の ${変数名} をプロジェクト設定の値で置換する.
 
         置換対象:
-        - ${base_url} → environment.base_url
-        - ${変数名}   → environment.variables.変数名
+        - ${base_url}    → environment.base_url
+        - ${変数名}      → environment.variables.変数名
+        - ${env:変数名}  → OS環境変数（未設定時は ValueError）
         """
         if not text or "${" not in text:
             return text
@@ -204,7 +211,17 @@ class ProjectConfig:
         variables = {"base_url": self.base_url, **self.variables}
 
         def replacer(match):
-            key = match.group(1)
-            return variables.get(key, match.group(0))
+            expr = match.group(1)
+            # ${env:VAR_NAME} → OS環境変数から取得
+            if expr.startswith("env:"):
+                env_key = expr[4:]
+                val = os.environ.get(env_key)
+                if val is None:
+                    raise ValueError(
+                        f"環境変数 '{env_key}' が設定されていません。"
+                        f" export {env_key}=... で設定してください。"
+                    )
+                return val
+            return variables.get(expr, match.group(0))
 
-        return re.sub(r"\$\{(\w+)\}", replacer, text)
+        return re.sub(r"\$\{([\w:]+)\}", replacer, text)
