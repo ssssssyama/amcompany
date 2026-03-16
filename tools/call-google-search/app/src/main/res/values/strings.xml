@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Call Google Search</string>
+    <string name="app_description">Automatically searches incoming phone numbers on Google to help identify spam and scam calls.</string>
+    <string name="feature_toggle">Auto-search enabled</string>
+    <string name="permissions_required">Phone permissions are required. Please grant them in Settings.</string>
+    <string name="status_enabled">Active — waiting for incoming calls</string>
+    <string name="status_disabled">Disabled</string>
+    <string name="open_settings">Open App Settings</string>
+</resources>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">着信Google検索</string>
+    <string name="app_description">着信時に電話番号をGoogleで自動検索し、迷惑電話や詐欺電話を判別できます。</string>
+    <string name="feature_toggle">自動検索を有効にする</string>
+    <string name="permissions_required">電話の権限が必要です。設定から許可してください。</string>
+    <string name="status_enabled">有効 — 着信を待機中</string>
+    <string name="status_disabled">無効</string>
+    <string name="open_settings">アプリ設定を開く</string>
+</resources>
