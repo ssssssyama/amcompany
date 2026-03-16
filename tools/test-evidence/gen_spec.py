@@ -3,12 +3,19 @@
 YAMLファイルでテストケースを定義し、Excel仕様書に変換する。
 Excelを手書きする代わりにYAMLで記述でき、Git差分やIDEの補完が使える。
 
+データ駆動テスト:
+    data_source でCSV/JSONファイルを指定すると、データ行ごとにステップを展開する。
+    ステップ内で ${data:列名} を使ってデータ値を参照できる。
+
 使い方:
     python gen_spec.py test_spec.yaml -o spec.xlsx
     python gen_spec.py test_spec.yaml              # → test_spec.xlsx に出力
 """
 
 import argparse
+import csv as csv_mod
+import json
+import re
 import sys
 from pathlib import Path
 
@@ -30,10 +37,13 @@ LEFT = Alignment(horizontal="left", vertical="center", wrap_text=True)
 VALID_ACTIONS = {
     "navigate", "click", "input", "select", "wait", "wait_for",
     "upload", "hover", "scroll", "keyboard",
-    "alert_accept", "alert_dismiss", "iframe", "include", "skip", "",
+    "alert_accept", "alert_dismiss", "iframe", "include", "skip",
+    "capture", "new_tab", "switch_tab", "close_tab", "download",
+    "if_ok", "if_ng", "",
 }
 VALID_VERIFY_TYPES = {
-    "text", "value", "visible", "hidden", "url", "screenshot", "db", "",
+    "text", "value", "visible", "hidden", "url", "screenshot", "db",
+    "download", "",
 }
 
 
@@ -130,7 +140,15 @@ def normalize_step(step_def: dict, step_no: int) -> dict:
         tc["verify_target"] = step_def["sql"]
 
     tc["expected"] = step_def.get("expected", "")
-    tc["note"] = step_def.get("note", "")
+    note = step_def.get("note", "")
+    # retry / retry_wait を備考欄に埋め込む
+    retry = step_def.get("retry")
+    if retry:
+        note = f"retry:{retry} {note}".strip()
+    retry_wait = step_def.get("retry_wait")
+    if retry_wait:
+        note = f"retry_wait:{retry_wait} {note}".strip()
+    tc["note"] = note
 
     # item が空の場合、action/verify から自動生成
     if not tc["item"]:
@@ -169,7 +187,83 @@ def validate_steps(sheet_name: str, steps: list[dict]) -> list[str]:
         if action == "include" and not step.get("input") and not step.get("sheet"):
             errors.append(f"{prefix}: action='include' にシート名が未指定")
 
+        if action == "capture" and not step.get("selector"):
+            errors.append(f"{prefix}: action='capture' にセレクタが未指定")
+        if action == "capture" and not step.get("input"):
+            errors.append(f"{prefix}: action='capture' に変数名(input)が未指定")
+
+        if action == "switch_tab" and not step.get("input"):
+            errors.append(f"{prefix}: action='switch_tab' にタブ名(input)が未指定")
+
+        if action == "download" and not step.get("selector"):
+            errors.append(f"{prefix}: action='download' にセレクタが未指定")
+
     return errors
+
+
+def _expand_data_source(steps: list[dict], data_path: str,
+                        yaml_dir: Path) -> list[dict]:
+    """data_source で指定されたCSV/JSONを読み込み、ステップをデータ行分展開する.
+
+    ステップ内の ${data:列名} をデータ値で置換する。
+
+    Args:
+        steps: 元のステップ定義リスト
+        data_path: CSV/JSONファイルパス（YAML相対 or 絶対）
+        yaml_dir: YAMLファイルのディレクトリ（相対パス解決用）
+
+    Returns:
+        展開されたステップリスト
+    """
+    path = Path(data_path)
+    if not path.is_absolute():
+        path = yaml_dir / path
+    if not path.exists():
+        print(f"エラー: data_source ファイルが見つかりません: {path}", file=sys.stderr)
+        sys.exit(1)
+
+    # データ読み込み
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        with open(path, encoding="utf-8-sig", newline="") as f:
+            reader = csv_mod.DictReader(f)
+            data_rows = list(reader)
+    elif suffix == ".json":
+        with open(path, encoding="utf-8") as f:
+            data_rows = json.load(f)
+            if not isinstance(data_rows, list):
+                print(f"エラー: data_source JSON はリストである必要があります: {path}",
+                      file=sys.stderr)
+                sys.exit(1)
+    else:
+        print(f"エラー: data_source は .csv または .json のみ対応: {path}",
+              file=sys.stderr)
+        sys.exit(1)
+
+    if not data_rows:
+        return steps  # データなし → 元のステップをそのまま返す
+
+    # ステップ展開: データ行ごとにステップを複製して ${data:col} を置換
+    expanded = []
+    for row_idx, row_data in enumerate(data_rows, 1):
+        row_label = row_data.get("name", row_data.get("id", str(row_idx)))
+        for step in steps:
+            new_step = dict(step)
+            # 各フィールドの ${data:col} を置換
+            for key in ("selector", "input", "expected", "item",
+                        "verify_target", "target", "sql", "note", "sheet"):
+                if key in new_step and isinstance(new_step[key], str):
+                    new_step[key] = re.sub(
+                        r"\$\{data:(\w+)\}",
+                        lambda m: str(row_data.get(m.group(1), m.group(0))),
+                        new_step[key],
+                    )
+            # テスト項目名にデータ識別子を付与
+            if "item" in new_step and new_step["item"]:
+                new_step["item"] = f"[row{row_idx}:{row_label}] {new_step['item']}"
+            expanded.append(new_step)
+
+    return expanded
 
 
 def gen_spec(yaml_path: str, output_path: str | None = None):
@@ -203,10 +297,15 @@ def gen_spec(yaml_path: str, output_path: str | None = None):
         sys.exit(1)
 
     # Excel生成
+    yaml_dir = yaml_path.parent
     wb = Workbook()
     for i, sheet_def in enumerate(sheets):
         name = sheet_def.get("name", f"Sheet{i + 1}")
         steps = sheet_def.get("steps", [])
+        # データ駆動: data_source が指定されていればステップを展開
+        data_source = sheet_def.get("data_source")
+        if data_source:
+            steps = _expand_data_source(steps, data_source, yaml_dir)
         test_cases = [normalize_step(s, j + 1) for j, s in enumerate(steps)]
         create_sheet(wb, name, test_cases, project_name, is_first=(i == 0))
 

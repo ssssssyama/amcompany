@@ -63,6 +63,17 @@ class StopTestError(Exception):
     """NG時にテスト実行を中断するための例外."""
 
 
+def _resolve_runtime(text: str, runtime_vars: dict) -> str:
+    """ランタイム変数 ${captured:xxx} を実行時に解決する."""
+    if not text or "${captured:" not in text:
+        return text
+
+    def replacer(m):
+        return runtime_vars.get(m.group(1), m.group(0))
+
+    return re.sub(r"\$\{captured:([\w]+)\}", replacer, text)
+
+
 def read_test_steps(ws, config: ProjectConfig) -> list[TestStep]:
     """テスト仕様書シートからテストステップを読み取る.
 
@@ -100,22 +111,46 @@ def read_test_steps(ws, config: ProjectConfig) -> list[TestStep]:
     return steps
 
 
-async def execute_action(page, step: TestStep):
-    """ブラウザ操作を実行する."""
+async def execute_action(page, step: TestStep, *,
+                         context=None, pages: dict | None = None,
+                         runtime_vars: dict | None = None,
+                         active_frame=None, download_dir: Path | None = None):
+    """ブラウザ操作を実行する.
+
+    Returns:
+        dict | None: 状態変更情報。キー例:
+            - "active_frame": iframe切替 (None=メインに戻る)
+            - "switch_page": タブ切替先のページ名
+            - "new_page": (名前, Page) 新タブ情報
+            - "close_page": 閉じるタブ名
+            - "download_path": ダウンロードされたファイルパス
+    """
     action = step.action
+    # iframe内操作: active_frame がセットされていれば locator 経由で操作
+    target = active_frame if active_frame else page
+    result = {}
 
     if action == "navigate":
         await page.goto(step.input_val, wait_until="networkidle")
 
     elif action == "click":
-        await page.click(step.selector)
+        if active_frame:
+            await active_frame.locator(step.selector).click()
+        else:
+            await page.click(step.selector)
         await page.wait_for_load_state("networkidle")
 
     elif action == "input":
-        await page.fill(step.selector, step.input_val)
+        if active_frame:
+            await active_frame.locator(step.selector).fill(step.input_val)
+        else:
+            await page.fill(step.selector, step.input_val)
 
     elif action == "select":
-        await page.select_option(step.selector, step.input_val)
+        if active_frame:
+            await active_frame.locator(step.selector).select_option(step.input_val)
+        else:
+            await page.select_option(step.selector, step.input_val)
 
     elif action == "wait":
         ms = int(step.input_val) if step.input_val else 1000
@@ -133,20 +168,34 @@ async def execute_action(page, step: TestStep):
                     wait_timeout = int(parts[1].strip())
             elif step.input_val.isdigit():
                 wait_timeout = int(step.input_val)
-        await page.wait_for_selector(step.selector, state=wait_state, timeout=wait_timeout)
+        if active_frame:
+            await active_frame.locator(step.selector).wait_for(
+                state=wait_state, timeout=wait_timeout)
+        else:
+            await page.wait_for_selector(
+                step.selector, state=wait_state, timeout=wait_timeout)
 
     elif action == "upload":
-        await page.set_input_files(step.selector, step.input_val)
+        if active_frame:
+            await active_frame.locator(step.selector).set_input_files(step.input_val)
+        else:
+            await page.set_input_files(step.selector, step.input_val)
 
     elif action == "hover":
-        await page.hover(step.selector)
+        if active_frame:
+            await active_frame.locator(step.selector).hover()
+        else:
+            await page.hover(step.selector)
 
     elif action == "scroll":
         if step.selector:
-            await page.eval_on_selector(
-                step.selector,
-                "el => el.scrollIntoView({behavior: 'smooth', block: 'center'})",
-            )
+            if active_frame:
+                await active_frame.locator(step.selector).scroll_into_view_if_needed()
+            else:
+                await page.eval_on_selector(
+                    step.selector,
+                    "el => el.scrollIntoView({behavior: 'smooth', block: 'center'})",
+                )
         else:
             y = int(step.input_val) if step.input_val else 500
             await page.evaluate(f"window.scrollBy(0, {y})")
@@ -161,10 +210,80 @@ async def execute_action(page, step: TestStep):
         page.once("dialog", lambda d: asyncio.ensure_future(d.dismiss()))
 
     elif action == "iframe":
-        # iframe内の操作は次ステップ以降で使えるようframeを返す
-        # （現状は指定セレクタのiframeにフォーカス切り替え）
-        frame = page.frame_locator(step.selector)
-        return frame
+        # iframe 永続切替: input="main" でメインフレームに戻る
+        if step.input_val and step.input_val.strip().lower() == "main":
+            result["active_frame"] = None
+        else:
+            result["active_frame"] = page.frame_locator(step.selector)
+
+    elif action == "capture":
+        # 画面要素のテキスト/属性値をランタイム変数に保存
+        var_spec = step.input_val.strip()
+        var_name = var_spec
+        attr_name = None
+        if ":attr=" in var_spec:
+            var_name, attr_part = var_spec.split(":attr=", 1)
+            attr_name = attr_part.strip()
+        if active_frame:
+            loc = active_frame.locator(step.selector)
+            if attr_name:
+                captured_val = await loc.get_attribute(attr_name) or ""
+            else:
+                captured_val = (await loc.text_content() or "").strip()
+        else:
+            element = await page.query_selector(step.selector)
+            if element is None:
+                raise RuntimeError(f"capture: 要素が見つかりません: {step.selector}")
+            if attr_name:
+                captured_val = await element.get_attribute(attr_name) or ""
+            else:
+                captured_val = (await element.text_content() or "").strip()
+        if runtime_vars is not None:
+            runtime_vars[var_name] = captured_val
+        logger.debug(f"  capture: ${{{var_name}}} = '{captured_val}'")
+
+    elif action == "new_tab":
+        # クリックで開かれる新タブをキャプチャ、またはURLで新タブを開く
+        tab_name = step.input_val.strip() if step.input_val else "tab"
+        if step.selector:
+            # セレクタをクリックして開かれるタブをキャプチャ
+            async with context.expect_page() as new_page_info:
+                if active_frame:
+                    await active_frame.locator(step.selector).click()
+                else:
+                    await page.click(step.selector)
+            new_page = await new_page_info.value
+            await new_page.wait_for_load_state("networkidle")
+        else:
+            # URLを指定して新タブを開く（input_valがタブ名の場合はnoteにURLを記載）
+            new_page = await context.new_page()
+            if step.note and step.note.startswith("http"):
+                await new_page.goto(step.note, wait_until="networkidle")
+        result["new_page"] = (tab_name, new_page)
+
+    elif action == "switch_tab":
+        tab_name = step.input_val.strip() if step.input_val else "main"
+        result["switch_page"] = tab_name
+
+    elif action == "close_tab":
+        tab_name = step.input_val.strip() if step.input_val else ""
+        if tab_name:
+            result["close_page"] = tab_name
+
+    elif action == "download":
+        # ファイルダウンロードを待機
+        dl_dir = download_dir or Path(tempfile.mkdtemp())
+        async with page.expect_download() as download_info:
+            if active_frame:
+                await active_frame.locator(step.selector).click()
+            else:
+                await page.click(step.selector)
+        download = await download_info.value
+        save_name = step.input_val.strip() if step.input_val else download.suggested_filename
+        save_path = dl_dir / save_name
+        await download.save_as(str(save_path))
+        result["download_path"] = save_path
+        logger.debug(f"  download: {save_path}")
 
     elif action == "include":
         # 別シートの共通手順を参照実行（run_sheet側で処理するためここではpass）
@@ -172,6 +291,8 @@ async def execute_action(page, step: TestStep):
 
     else:
         logger.warning(f"未知の操作種別: {action}")
+
+    return result or None
 
 
 async def take_screenshot(page, output_dir: Path, step_no,
@@ -261,6 +382,19 @@ async def verify_screen(page, step: TestStep) -> tuple[bool, str]:
         return True, "スクリーンショット取得"
 
     return True, ""
+
+
+def verify_download(download_path: Path | None, step: TestStep) -> tuple[bool, str]:
+    """ダウンロードされたファイルを検証する."""
+    if download_path is None or not download_path.exists():
+        return False, f"NG: ダウンロードファイルが見つかりません: {step.verify_target}"
+    if not step.expected:
+        return True, f"OK: ファイルが存在します: {download_path.name}"
+    try:
+        content = download_path.read_text(encoding="utf-8", errors="replace")
+    except Exception as e:
+        return False, f"NG: ファイル読み取りエラー: {e}"
+    return _match_expected(content, step.expected)
 
 
 def _match_db_result(rows: list, columns: list[str], expected: str) -> tuple[bool, str]:
@@ -522,16 +656,48 @@ async def authenticate(page, config: ProjectConfig):
         logger.info(f"認証完了 (cookie: {len(auth.get('cookies', []))}件)")
 
 
+def _parse_retry_from_note(note: str) -> tuple[int, int]:
+    """備考欄から retry:N / retry_wait:N を解析する.
+
+    Returns:
+        (retry_count, retry_wait_ms)
+    """
+    retry = 0
+    retry_wait = 1000
+    if not note:
+        return retry, retry_wait
+    for part in note.split():
+        if part.startswith("retry:"):
+            try:
+                retry = int(part.split(":", 1)[1])
+            except ValueError:
+                pass
+        elif part.startswith("retry_wait:"):
+            try:
+                retry_wait = int(part.split(":", 1)[1])
+            except ValueError:
+                pass
+    return retry, retry_wait
+
+
 async def run_sheet(page, ws, config: ProjectConfig, screenshot_dir: Path,
                     effective_a5m2_cmd: str, effective_a5m2_connect: str,
                     sheet_name: str,
                     step_filter: set[int] | None = None,
-                    wb=None) -> tuple[int, int, int, list]:
+                    wb=None, context=None) -> tuple[int, int, int, list]:
     """1シート分のテストを実行する.
+
+    拡張機能:
+    - ランタイム変数: capture で取得した値を ${captured:xxx} で後続ステップから参照
+    - 複数タブ: new_tab/switch_tab/close_tab で複数ページを管理
+    - iframe永続: iframe で切替え、iframe input=main で戻る
+    - 条件分岐: if_ok/if_ng で前ステップの結果に応じて実行/スキップ
+    - リトライ: 備考欄に retry:N を記載するとN回まで再試行
 
     Args:
         step_filter: 実行対象のステップNo.集合（Noneなら全ステップ実行）
         wb: ワークブック（action=includeで別シート参照時に使用）
+        context: ブラウザコンテキスト（複数タブ管理用）
 
     Returns:
         (ok_count, ng_count, skip_count, ng_details)
@@ -549,15 +715,55 @@ async def run_sheet(page, ws, config: ProjectConfig, screenshot_dir: Path,
     total_steps = len(steps)
     logger.info(f"[{sheet_name}] {total_steps} ステップを実行")
 
+    # 拡張: ランタイム変数、ページ管理、iframe永続
+    runtime_vars = {}
+    pages = {"main": page}
+    current_page_name = "main"
+    active_frame = None
+    last_download_path = None  # 直近のダウンロードファイルパス
+
     aborted = False
+    prev_passed = None  # 前ステップの結果（条件分岐用）
     ng_details = []  # NG一覧を収集
+
     for idx, step in enumerate(steps, 1):
         step_start = time.monotonic()
+
+        # ランタイム変数をステップの各フィールドに適用
+        step.selector = _resolve_runtime(step.selector, runtime_vars)
+        step.input_val = _resolve_runtime(step.input_val, runtime_vars)
+        step.verify_target = _resolve_runtime(step.verify_target, runtime_vars)
+        step.expected = _resolve_runtime(step.expected, runtime_vars)
+
         logger.info(f"  [{idx}/{total_steps}] Step {step.no}: {step.item}...")
 
         screenshot_path = None
         passed = None
         message = ""
+        current_page = pages.get(current_page_name, page)
+
+        # 条件分岐: if_ok / if_ng
+        if step.action in ("if_ok", "if_ng"):
+            should_run = (step.action == "if_ok" and prev_passed is True) or \
+                         (step.action == "if_ng" and prev_passed is False)
+            if not should_run:
+                passed = None
+                cond = "OK" if step.action == "if_ok" else "NG"
+                message = f"条件スキップ (前ステップが{cond}ではない)"
+                write_result(ws, col_map, step, passed, message, None, img_w, img_h)
+                elapsed = time.monotonic() - step_start
+                logger.info(f"  [{idx}/{total_steps}] Step {step.no}: [SKIP] {message} ({elapsed:.1f}s)")
+                continue
+            # 条件を満たした場合: input_val に実際のアクション名が入る
+            # selector はそのまま使用
+            step.action = step.input_val.strip().lower() if step.input_val else ""
+            if not step.action:
+                passed = None
+                message = "条件分岐: 実行するアクションが未指定"
+                write_result(ws, col_map, step, passed, message, None, img_w, img_h)
+                elapsed = time.monotonic() - step_start
+                logger.info(f"  [{idx}/{total_steps}] Step {step.no}: [SKIP] {message} ({elapsed:.1f}s)")
+                continue
 
         # action=include: 別シートの共通手順を参照実行
         if step.action == "include":
@@ -572,6 +778,7 @@ async def run_sheet(page, ws, config: ProjectConfig, screenshot_dir: Path,
                                    "item": step.item, "message": message})
                 if on_fail == "abort":
                     aborted = True
+                prev_passed = passed
                 continue
             logger.info(f"  → include: シート '{ref_sheet}' のステップを実行")
             ref_ws = wb[ref_sheet]
@@ -579,7 +786,10 @@ async def run_sheet(page, ws, config: ProjectConfig, screenshot_dir: Path,
             for ref_step in ref_steps:
                 try:
                     if ref_step.action and ref_step.action != "skip":
-                        await execute_action(page, ref_step)
+                        await execute_action(current_page, ref_step,
+                                             context=context, pages=pages,
+                                             runtime_vars=runtime_vars,
+                                             active_frame=active_frame)
                     if ref_step.verify_type == "db":
                         if config.db_type == "sqlite" and config.sqlite_path:
                             r_passed, r_msg = verify_db_sqlite(ref_step, config.sqlite_path)
@@ -589,7 +799,7 @@ async def run_sheet(page, ws, config: ProjectConfig, screenshot_dir: Path,
                         if not r_passed:
                             raise RuntimeError(f"include内DB検証NG: {r_msg}")
                     elif ref_step.verify_type and ref_step.verify_type != "screenshot":
-                        r_passed, r_msg = await verify_screen(page, ref_step)
+                        r_passed, r_msg = await verify_screen(current_page, ref_step)
                         if not r_passed:
                             raise RuntimeError(f"include内検証NG: {r_msg}")
                 except Exception as e:
@@ -609,6 +819,7 @@ async def run_sheet(page, ws, config: ProjectConfig, screenshot_dir: Path,
                 write_result(ws, col_map, step, passed, message, None, img_w, img_h)
                 elapsed = time.monotonic() - step_start
                 logger.info(f"  [{idx}/{total_steps}] Step {step.no}: [OK] {message} ({elapsed:.1f}s)")
+            prev_passed = passed
             continue
 
         # action=skip: 事前スキップ指定
@@ -639,45 +850,107 @@ async def run_sheet(page, ws, config: ProjectConfig, screenshot_dir: Path,
             logger.info(f"  [{idx}/{total_steps}] Step {step.no}: [SKIP] {message} ({elapsed:.1f}s)")
             continue
 
-        try:
-            # ブラウザ操作を実行
-            if step.action:
-                await execute_action(page, step)
+        # リトライ設定を備考欄から解析
+        retry_count, retry_wait = _parse_retry_from_note(step.note)
 
-            # スクリーンショット撮影
-            if step.action or step.verify_type == "screenshot":
-                screenshot_path = await take_screenshot(
-                    page, screenshot_dir, f"{sheet_name}_{step.no}",
-                )
+        for attempt in range(1 + retry_count):
+            if attempt > 0:
+                logger.info(f"  → リトライ {attempt}/{retry_count} ({retry_wait}ms待機後)")
+                await asyncio.sleep(retry_wait / 1000)
 
-            # 検証
-            if step.verify_type == "db":
-                if config.db_type == "sqlite" and config.sqlite_path:
-                    passed, message = verify_db_sqlite(
-                        step, config.sqlite_path,
-                    )
-                else:
-                    passed, message = verify_db_a5m2(
-                        step,
-                        effective_a5m2_cmd or "",
-                        effective_a5m2_connect or "",
-                    )
-            elif step.verify_type:
-                passed, message = await verify_screen(page, step)
-            else:
-                passed = True
-                message = "操作完了"
-
-        except Exception as e:
-            passed = False
-            message = f"エラー: {e}"
-            logger.debug(f"  Step {step.no} 例外詳細:\n{traceback.format_exc()}")
             try:
-                screenshot_path = await take_screenshot(
-                    page, screenshot_dir, f"{sheet_name}_{step.no}_error",
-                )
-            except Exception:
-                pass
+                # ブラウザ操作を実行
+                action_result = None
+                if step.action:
+                    action_result = await execute_action(
+                        current_page, step,
+                        context=context, pages=pages,
+                        runtime_vars=runtime_vars,
+                        active_frame=active_frame,
+                        download_dir=screenshot_dir.parent / "downloads",
+                    )
+
+                # execute_action の戻り値による状態更新
+                if action_result:
+                    if "active_frame" in action_result:
+                        active_frame = action_result["active_frame"]
+                    if "new_page" in action_result:
+                        tab_name, new_pg = action_result["new_page"]
+                        pages[tab_name] = new_pg
+                        current_page_name = tab_name
+                        current_page = new_pg
+                        logger.debug(f"  new_tab: '{tab_name}' を追加")
+                    if "switch_page" in action_result:
+                        target_name = action_result["switch_page"]
+                        if target_name in pages:
+                            current_page_name = target_name
+                            current_page = pages[target_name]
+                            active_frame = None  # タブ切替時はiframeリセット
+                            logger.debug(f"  switch_tab: '{target_name}' に切替")
+                        else:
+                            raise RuntimeError(
+                                f"switch_tab: タブ '{target_name}' が見つかりません "
+                                f"(利用可能: {list(pages.keys())})")
+                    if "close_page" in action_result:
+                        close_name = action_result["close_page"]
+                        if close_name in pages and close_name != "main":
+                            await pages[close_name].close()
+                            del pages[close_name]
+                            if current_page_name == close_name:
+                                current_page_name = "main"
+                                current_page = pages["main"]
+                                active_frame = None
+                            logger.debug(f"  close_tab: '{close_name}' を閉じた")
+                    if "download_path" in action_result:
+                        last_download_path = action_result["download_path"]
+
+                # スクリーンショット撮影
+                if step.action or step.verify_type == "screenshot":
+                    screenshot_path = await take_screenshot(
+                        current_page, screenshot_dir, f"{sheet_name}_{step.no}",
+                    )
+
+                # 検証
+                if step.verify_type == "download":
+                    passed, message = verify_download(last_download_path, step)
+                elif step.verify_type == "db":
+                    if config.db_type == "sqlite" and config.sqlite_path:
+                        passed, message = verify_db_sqlite(
+                            step, config.sqlite_path,
+                        )
+                    else:
+                        passed, message = verify_db_a5m2(
+                            step,
+                            effective_a5m2_cmd or "",
+                            effective_a5m2_connect or "",
+                        )
+                elif step.verify_type:
+                    passed, message = await verify_screen(current_page, step)
+                else:
+                    passed = True
+                    message = "操作完了"
+
+            except Exception as e:
+                passed = False
+                message = f"エラー: {e}"
+                logger.debug(f"  Step {step.no} 例外詳細:\n{traceback.format_exc()}")
+                try:
+                    screenshot_path = await take_screenshot(
+                        current_page, screenshot_dir,
+                        f"{sheet_name}_{step.no}_error",
+                    )
+                except Exception:
+                    pass
+
+            # リトライ: 成功したらループ脱出
+            if passed is not False:
+                break
+            # まだリトライ回数が残っていれば続行
+            if attempt < retry_count:
+                logger.info(f"  Step {step.no}: [NG] {message} → リトライします")
+
+        if attempt > 0 and passed:
+            message = f"{message} (リトライ{attempt}回目で成功)"
 
         # 結果をExcelに書き込み
         write_result(ws, col_map, step, passed, message, screenshot_path, img_w, img_h)
@@ -685,6 +958,8 @@ async def run_sheet(page, ws, config: ProjectConfig, screenshot_dir: Path,
         elapsed = time.monotonic() - step_start
         status = "OK" if passed else ("NG" if passed is False else "SKIP")
         logger.info(f"  [{idx}/{total_steps}] Step {step.no}: [{status}] {message} ({elapsed:.1f}s)")
+
+        prev_passed = passed
 
         # NG情報を収集
         if passed is False:
@@ -699,6 +974,14 @@ async def run_sheet(page, ws, config: ProjectConfig, screenshot_dir: Path,
         if passed is False and on_fail == "abort":
             logger.warning(f"  NG検出 → テスト中断 (on_fail=abort)")
             aborted = True
+
+    # 開いた追加タブをクリーンアップ（mainは除く）
+    for tab_name, tab_page in list(pages.items()):
+        if tab_name != "main":
+            try:
+                await tab_page.close()
+            except Exception:
+                pass
 
     # サマリー集計
     ok = sum(1 for s in steps if ws[f"{col_map['result']}{s.row}"].value == "OK")
@@ -746,10 +1029,13 @@ def _validate_spec(wb, config: ProjectConfig, target_sheets: list[str]) -> list[
     valid_actions = {
         "navigate", "click", "input", "select", "wait", "wait_for",
         "upload", "hover", "scroll", "keyboard",
-        "alert_accept", "alert_dismiss", "iframe", "include", "skip", "",
+        "alert_accept", "alert_dismiss", "iframe", "include", "skip",
+        "capture", "new_tab", "switch_tab", "close_tab", "download",
+        "if_ok", "if_ng", "",
     }
     valid_verify_types = {
-        "text", "value", "visible", "hidden", "url", "screenshot", "db", "",
+        "text", "value", "visible", "hidden", "url", "screenshot", "db",
+        "download", "",
     }
     valid_expected_prefixes = {
         "contains:", "regex:",
@@ -1012,7 +1298,7 @@ async def run_tests(spec_path: str, output_path: str | None = None,
             ok, ng, skip, ng_details = await run_sheet(
                 page, ws, config, screenshot_dir,
                 effective_a5m2_cmd, effective_a5m2_connect,
-                sheet_name, step_filter, wb=wb,
+                sheet_name, step_filter, wb=wb, context=context,
             )
             total_ok += ok
             total_ng += ng
