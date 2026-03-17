@@ -1,4 +1,4 @@
-"""データ管理モジュール — CSVファイルの読込・検証・データ取得"""
+"""データ管理モジュール — CSV/SQLiteファイルの読込・検証・データ取得"""
 
 import os
 import csv
@@ -89,6 +89,41 @@ def load_upcoming(path):
             row["horse_weight_diff"] = _parse_int(row.get("horse_weight_diff"))
             rows.append(row)
 
+    return rows
+
+
+def load_races_from_db(db_path):
+    """SQLiteデータベースから過去レースデータを読み込む
+
+    Returns:
+        list[dict]: 各行を辞書にしたリスト（型変換済み）
+    """
+    from database import Database
+    db = Database(db_path)
+    rows = db.load_all_races()
+    db.close()
+    return rows
+
+
+def load_upcoming_from_scraper(race_id):
+    """スクレイパー経由で出馬表を取得
+
+    Returns:
+        list[dict]: 各馬のエントリ情報
+    """
+    from scraper import fetch_race_card
+    rows = fetch_race_card(race_id)
+    if not rows:
+        raise ValueError(f"出馬表を取得できませんでした: {race_id}")
+    # 型変換
+    for row in rows:
+        row["race_number"] = _parse_int(row.get("race_number"))
+        row["distance"] = _parse_int(row.get("distance"))
+        row["horse_number"] = _parse_int(row.get("horse_number"))
+        row["gate_number"] = _parse_int(row.get("gate_number"))
+        row["weight"] = _parse_float(row.get("weight"))
+        row["horse_weight"] = _parse_int(row.get("horse_weight"))
+        row["horse_weight_diff"] = _parse_int(row.get("horse_weight_diff"))
     return rows
 
 

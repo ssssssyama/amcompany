@@ -44,6 +44,16 @@ ERROR_MESSAGES = {
             "以下のコマンドを実行してください:\n"
             "  pip install -r requirements-keiba.txt"
         ),
+        "requests": (
+            "requests パッケージがインストールされていません。\n"
+            "以下のコマンドを実行してください:\n"
+            "  pip install -r requirements-keiba.txt"
+        ),
+        "bs4": (
+            "beautifulsoup4 パッケージがインストールされていません。\n"
+            "以下のコマンドを実行してください:\n"
+            "  pip install -r requirements-keiba.txt"
+        ),
     },
     "OSError": {
         "99": (
