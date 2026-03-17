@@ -1,7 +1,11 @@
-"""YAML テスト定義 → Excel テスト仕様書 生成ツール.
+"""テスト定義 → Excel テスト仕様書 生成ツール.
 
-YAMLファイルでテストケースを定義し、Excel仕様書に変換する。
-Excelを手書きする代わりにYAMLで記述でき、Git差分やIDEの補完が使える。
+YAML または プレーンテキスト(.txt) でテストケースを定義し、Excel仕様書に変換する。
+Excelを手書きする代わりに定義ファイルで記述でき、Git差分やIDEの補完が使える。
+
+プレーンテキスト形式:
+    1行1ステップの簡易記法。YAML 構文を一切使わずにテストを定義できる。
+    python gen_spec.py test.txt -o spec.xlsx
 
 データ駆動テスト:
     data_source でCSV/JSONファイルを指定すると、データ行ごとにステップを展開する。
@@ -10,6 +14,7 @@ Excelを手書きする代わりにYAMLで記述でき、Git差分やIDEの補�
 使い方:
     python gen_spec.py test_spec.yaml -o spec.xlsx
     python gen_spec.py test_spec.yaml              # → test_spec.xlsx に出力
+    python gen_spec.py test.txt -o spec.xlsx       # プレーンテキスト入力
 """
 
 import argparse
@@ -436,15 +441,20 @@ def _expand_data_source(steps: list[dict], data_path: str,
     return expanded
 
 
-def gen_spec(yaml_path: str, output_path: str | None = None):
-    """YAML定義からExcelテスト仕様書を生成する."""
-    yaml_path = Path(yaml_path)
-    if not yaml_path.exists():
-        print(f"エラー: ファイルが見つかりません: {yaml_path}", file=sys.stderr)
+def gen_spec(input_path: str, output_path: str | None = None):
+    """テスト定義（YAML / テキスト）からExcelテスト仕様書を生成する."""
+    input_path = Path(input_path)
+    if not input_path.exists():
+        print(f"エラー: ファイルが見つかりません: {input_path}", file=sys.stderr)
         sys.exit(1)
 
-    with open(yaml_path, encoding="utf-8") as f:
-        spec = yaml.safe_load(f) or {}
+    # プレーンテキスト形式の自動判定
+    if input_path.suffix.lower() == ".txt":
+        from text2spec import parse_text_spec
+        spec = parse_text_spec(input_path)
+    else:
+        with open(input_path, encoding="utf-8") as f:
+            spec = yaml.safe_load(f) or {}
 
     sheets = spec.get("sheets", [])
     if not sheets:
@@ -480,7 +490,7 @@ def gen_spec(yaml_path: str, output_path: str | None = None):
         sys.exit(1)
 
     # Excel生成
-    yaml_dir = yaml_path.parent
+    input_dir = input_path.parent
     wb = Workbook()
     for i, sheet_def in enumerate(sheets):
         name = sheet_def.get("name", f"Sheet{i + 1}")
@@ -488,12 +498,12 @@ def gen_spec(yaml_path: str, output_path: str | None = None):
         # データ駆動: data_source が指定されていればステップを展開
         data_source = sheet_def.get("data_source")
         if data_source:
-            steps = _expand_data_source(steps, data_source, yaml_dir)
+            steps = _expand_data_source(steps, data_source, input_dir)
         test_cases = [normalize_step(s, j + 1, selector_aliases) for j, s in enumerate(steps)]
         create_sheet(wb, name, test_cases, project_name, is_first=(i == 0))
 
     if output_path is None:
-        output_path = yaml_path.with_suffix(".xlsx")
+        output_path = input_path.with_suffix(".xlsx")
     output_path = Path(output_path)
     wb.save(str(output_path))
     print(f"テスト仕様書を生成しました: {output_path}")
@@ -504,12 +514,12 @@ def gen_spec(yaml_path: str, output_path: str | None = None):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="YAML テスト定義 → Excel テスト仕様書 生成ツール"
+        description="テスト定義 (.yaml / .txt) → Excel テスト仕様書 生成ツール"
     )
-    parser.add_argument("yaml_file", help="YAMLテスト定義ファイルのパス")
+    parser.add_argument("input_file", help="テスト定義ファイル (.yaml / .txt)")
     parser.add_argument("-o", "--output", help="出力先Excelファイルのパス")
     args = parser.parse_args()
-    gen_spec(args.yaml_file, args.output)
+    gen_spec(args.input_file, args.output)
 
 
 if __name__ == "__main__":
