@@ -1,0 +1,9 @@
+# テクスチャ高画質化ツール用の依存パッケージ
+#
+# NVIDIA GPU: pip install -r requirements.txt
+# AMD GPU:    pip install torch torchvision --index-url https://download.pytorch.org/whl/rocm6.1
+#             pip install realesrgan opencv-python Pillow
+torch>=2.1.0
+realesrgan>=0.3.0
+opencv-python>=4.8.0
+Pillow>=10.0.0

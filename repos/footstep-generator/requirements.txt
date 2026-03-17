@@ -1,0 +1,9 @@
+# 足音AI生成ツール用の依存パッケージ
+#
+# NVIDIA GPU: pip install -r requirements.txt
+# AMD GPU:    pip install torch torchaudio --index-url https://download.pytorch.org/whl/rocm6.1
+#             pip install einops stable-audio-tools
+torch>=2.1.0
+torchaudio>=2.1.0
+einops>=0.7.0
+stable-audio-tools>=0.0.12
