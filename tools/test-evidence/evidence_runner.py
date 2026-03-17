@@ -104,6 +104,9 @@ def read_test_steps(ws, config: ProjectConfig) -> list[TestStep]:
         if not action_raw and not verify_raw:
             interpreted = _interpret_natural_language(
                 {"item": item_raw}, aliases)
+            nl_warning = interpreted.pop("_nl_warning", None)
+            if nl_warning:
+                logger.warning("Row %d: %s (item=%r)", row, nl_warning, item_raw)
             action_raw = interpreted.get("action", action_raw)
             verify_raw = interpreted.get("verify",
                                          interpreted.get("verify_type", verify_raw))

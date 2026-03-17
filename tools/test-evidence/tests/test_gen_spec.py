@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from gen_spec import (
     normalize_step, validate_steps, gen_spec, _expand_data_source,
-    _interpret_natural_language,
+    _interpret_natural_language, _check_nl_warning,
 )
 
 
@@ -583,3 +583,104 @@ class TestNaturalLanguage:
         assert ws["G10"].value == "#dashboard"
         # screenshot
         assert ws["F11"].value == "screenshot"
+
+
+class TestNLWarning:
+    """自然言語の文法誤り警告テスト."""
+
+    # --- _check_nl_warning 単体テスト ---
+
+    def test_unmatched_open_bracket(self):
+        result = _check_nl_warning("「#btnをクリック")
+        assert result is not None
+        assert "括弧" in result
+
+    def test_unmatched_close_bracket(self):
+        result = _check_nl_warning("#btn」をクリック")
+        assert result is not None
+        assert "括弧" in result
+
+    def test_matched_brackets_no_keyword(self):
+        assert _check_nl_warning("事前条件を確認する") is None
+
+    def test_action_keyword_no_pattern_match(self):
+        result = _check_nl_warning("#btnがクリック")
+        assert result is not None
+        assert "クリック" in result
+
+    def test_verify_keyword_no_pattern_match(self):
+        result = _check_nl_warning("画面が表示確認")
+        assert result is not None
+        assert "表示" in result
+
+    def test_no_warning_plain_text(self):
+        assert _check_nl_warning("テストの事前条件") is None
+
+    def test_contains_keyword(self):
+        result = _check_nl_warning("値を含むかどうか")
+        assert result is not None
+        assert "含む" in result
+
+    def test_screenshot_keyword(self):
+        # 「スクリーンショット」はパターンにマッチするのでここには来ない
+        # ただし _check_nl_warning 単体で呼ぶとキーワード検出される
+        result = _check_nl_warning("スクリーンショットの確認")
+        assert result is not None
+
+    # --- _interpret_natural_language 経由の警告テスト ---
+
+    def test_interpret_warning_unmatched_brackets(self):
+        result = _interpret_natural_language({"item": "「#btnをクリック"})
+        assert "_nl_warning" in result
+        assert "括弧" in result["_nl_warning"]
+        assert "action" not in result  # パターン不一致で action は未設定
+
+    def test_interpret_warning_wrong_particle(self):
+        result = _interpret_natural_language({"item": "#btnがクリック"})
+        assert "_nl_warning" in result
+        assert "クリック" in result["_nl_warning"]
+
+    def test_interpret_warning_verify_wrong_form(self):
+        result = _interpret_natural_language({"item": "「#msg」に表示確認"})
+        assert "_nl_warning" in result
+
+    def test_interpret_no_warning_on_valid_match(self):
+        result = _interpret_natural_language({"item": "「#btn」をクリック"})
+        assert "_nl_warning" not in result
+        assert result["action"] == "click"
+
+    def test_interpret_no_warning_on_plain_text(self):
+        result = _interpret_natural_language({"item": "事前条件を確認する"})
+        assert "_nl_warning" not in result
+
+    def test_interpret_no_warning_with_explicit_action(self):
+        result = _interpret_natural_language({"action": "click", "item": "何かクリック的な"})
+        assert "_nl_warning" not in result  # action 指定済みならNL解釈自体スキップ
+
+    def test_interpret_no_warning_on_screenshot_match(self):
+        """スクリーンショットはパターンにマッチするので警告なし."""
+        result = _interpret_natural_language({"item": "スクリーンショットを取得"})
+        assert "_nl_warning" not in result
+        assert result["verify"] == "screenshot"
+
+    # --- gen_spec 経由の警告出力テスト ---
+
+    def test_gen_spec_prints_warning(self, tmp_path, capsys):
+        yaml_file = tmp_path / "warn_test.yaml"
+        yaml_file.write_text(yaml.dump({
+            "project": "警告テスト",
+            "sheets": [{
+                "name": "テスト",
+                "steps": [
+                    {"item": "「#btnをクリック"},  # 括弧不整合
+                    {"item": "「#btn」をクリック"},  # 正常
+                ],
+            }],
+        }, allow_unicode=True), encoding="utf-8")
+
+        output_file = tmp_path / "warn_test.xlsx"
+        gen_spec(str(yaml_file), str(output_file))
+
+        captured = capsys.readouterr()
+        assert "警告" in captured.err
+        assert "括弧" in captured.err

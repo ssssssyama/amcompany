@@ -147,7 +147,53 @@ def _interpret_natural_language(step_def: dict, selector_aliases: dict | None = 
                     result[key] = val
             return result
 
+    # パターン不一致 → 警告チェック
+    warning = _check_nl_warning(text)
+    if warning:
+        result["_nl_warning"] = warning
     return result
+
+
+# --- NL 警告検出 ---
+
+NL_HINT_KEYWORDS_ACTION = (
+    "クリック", "入力", "選択", "遷移", "開く", "アクセス",
+    "待機", "ホバー", "マウスオーバー", "アップロード",
+    "スクロール", "キャプチャ", "保存", "取得", "押す",
+)
+NL_HINT_KEYWORDS_VERIFY = ("表示", "非表示", "含む", "スクリーンショット")
+
+
+def _check_nl_warning(text: str) -> str | None:
+    """NLパターン不一致時に、書き間違いの可能性を警告する."""
+    # 括弧の不整合
+    open_count = text.count("「")
+    close_count = text.count("」")
+    if open_count != close_count:
+        return (
+            f"括弧「」の数が不一致です（開: {open_count}, 閉: {close_count}）。"
+            " 正しい記法例: 「#selector」をクリック"
+        )
+
+    # 操作キーワード
+    for kw in NL_HINT_KEYWORDS_ACTION:
+        if kw in text:
+            return (
+                f"操作キーワード「{kw}」が見つかりましたが、"
+                "パターンに一致しません。記法を確認してください。"
+                " 例: 「#selector」をクリック、「#input」に「値」を入力"
+            )
+
+    # 検証キーワード
+    for kw in NL_HINT_KEYWORDS_VERIFY:
+        if kw in text:
+            return (
+                f"検証キーワード「{kw}」が見つかりましたが、"
+                "パターンに一致しません。記法を確認してください。"
+                " 例: 「#selector」が表示されること、「#msg」に「値」と表示"
+            )
+
+    return None
 
 
 VALID_ACTIONS = {
@@ -410,11 +456,22 @@ def gen_spec(yaml_path: str, output_path: str | None = None):
 
     # NL解釈後にバリデーション（NLで補完されたフィールドも検証対象にする）
     all_errors = []
+    all_warnings = []
     for sheet_def in sheets:
         name = sheet_def.get("name", "Sheet")
         steps = sheet_def.get("steps", [])
         interpreted_steps = [_interpret_natural_language(s, selector_aliases) for s in steps]
         all_errors.extend(validate_steps(name, interpreted_steps))
+        # NL警告を収集
+        for j, interp in enumerate(interpreted_steps):
+            nl_warning = interp.get("_nl_warning")
+            if nl_warning:
+                all_warnings.append(f"[{name}] Step {j + 1}: {nl_warning}")
+
+    if all_warnings:
+        print("自然言語の警告:", file=sys.stderr)
+        for warn in all_warnings:
+            print(f"  警告 {warn}", file=sys.stderr)
 
     if all_errors:
         print("バリデーションエラー:", file=sys.stderr)
