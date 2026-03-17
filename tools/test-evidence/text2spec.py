@@ -117,6 +117,19 @@ def parse_text_spec(path: str | Path) -> dict:
             current_data_source = None
             continue
 
+        # SQL実行プレフィックス: 直接 sql_exec アクションに変換
+        sql_prefixes = ("SQL実行:", "SQL実行：", "DB実行:", "DB実行：")
+        is_sql = False
+        for pfx in sql_prefixes:
+            if line.startswith(pfx):
+                sql = line[len(pfx):].strip()
+                current_steps.append({"action": "sql_exec", "input": sql,
+                                      "item": f"SQL実行: {sql[:40]}"})
+                is_sql = True
+                break
+        if is_sql:
+            continue
+
         # テストステップ（NL 解釈は gen_spec のパイプラインに任せる）
         current_steps.append({"item": line})
 

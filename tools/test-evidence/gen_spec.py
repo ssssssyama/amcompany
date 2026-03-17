@@ -71,6 +71,8 @@ NL_ACTION_PATTERNS = [
     (r"「(.+?)」をアップロード", {"action": "upload", "input": 1}),
     # 「セレクタ」までスクロール
     (r"「(.+?)」までスクロール", {"action": "scroll", "selector": 1}),
+    # SQL実行: ... / DB実行: ...
+    (r"(?:SQL実行|DB実行)[：:](.+)", {"action": "sql_exec", "input": 1}),
 ]
 
 # 検証パターン
@@ -206,7 +208,7 @@ VALID_ACTIONS = {
     "upload", "hover", "scroll", "keyboard",
     "alert_accept", "alert_dismiss", "iframe", "include", "skip",
     "capture", "new_tab", "switch_tab", "close_tab", "download",
-    "if_ok", "if_ng", "",
+    "if_ok", "if_ng", "sql_exec", "",
 }
 VALID_VERIFY_TYPES = {
     "text", "value", "visible", "hidden", "url", "screenshot", "db",
@@ -372,6 +374,9 @@ def validate_steps(sheet_name: str, steps: list[dict]) -> list[str]:
 
         if action == "download" and not step.get("selector"):
             errors.append(f"{prefix}: action='download' にセレクタが未指定")
+
+        if action == "sql_exec" and not step.get("input"):
+            errors.append(f"{prefix}: action='sql_exec' にSQL(input)が未指定")
 
     return errors
 

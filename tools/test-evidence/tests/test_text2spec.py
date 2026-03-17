@@ -247,3 +247,63 @@ class TestGenSpecTextIntegration:
         assert len(wb.sheetnames) == 2
         assert wb.sheetnames[0] == "シート1"
         assert wb.sheetnames[1] == "シート2"
+
+
+class TestSqlExecPrefix:
+    """SQL実行/DB実行 プレフィックスのパーステスト."""
+
+    def test_sql_exec_prefix(self, tmp_path):
+        txt = tmp_path / "test.txt"
+        txt.write_text(
+            "# DBテスト\nSQL実行: INSERT INTO t VALUES (1, 'x')\n",
+            encoding="utf-8")
+        spec = parse_text_spec(txt)
+        step = spec["sheets"][0]["steps"][0]
+        assert step["action"] == "sql_exec"
+        assert step["input"] == "INSERT INTO t VALUES (1, 'x')"
+
+    def test_db_exec_prefix(self, tmp_path):
+        txt = tmp_path / "test.txt"
+        txt.write_text(
+            "# DBテスト\nDB実行: DELETE FROM t WHERE id = 1\n",
+            encoding="utf-8")
+        spec = parse_text_spec(txt)
+        step = spec["sheets"][0]["steps"][0]
+        assert step["action"] == "sql_exec"
+        assert step["input"] == "DELETE FROM t WHERE id = 1"
+
+    def test_sql_exec_fullwidth_colon(self, tmp_path):
+        txt = tmp_path / "test.txt"
+        txt.write_text(
+            "# DBテスト\nSQL実行：UPDATE t SET x = 1\n",
+            encoding="utf-8")
+        spec = parse_text_spec(txt)
+        step = spec["sheets"][0]["steps"][0]
+        assert step["action"] == "sql_exec"
+        assert step["input"] == "UPDATE t SET x = 1"
+
+    def test_sql_exec_item_truncated(self, tmp_path):
+        """item フィールドが長いSQLを40文字に切り詰めること."""
+        long_sql = "INSERT INTO very_long_table_name (col1, col2, col3) VALUES ('aaa', 'bbb', 'ccc')"
+        txt = tmp_path / "test.txt"
+        txt.write_text(f"# DBテスト\nSQL実行: {long_sql}\n", encoding="utf-8")
+        spec = parse_text_spec(txt)
+        step = spec["sheets"][0]["steps"][0]
+        assert step["input"] == long_sql
+        assert len(step["item"]) <= len("SQL実行: ") + 40
+
+    def test_sql_exec_mixed_with_browser_steps(self, tmp_path):
+        """SQL実行とブラウザ操作ステップが混在."""
+        txt = tmp_path / "test.txt"
+        txt.write_text(
+            "# テスト\n"
+            "SQL実行: DELETE FROM t\n"
+            "「#btn」をクリック\n"
+            "DB実行: INSERT INTO t VALUES (1)\n",
+            encoding="utf-8")
+        spec = parse_text_spec(txt)
+        steps = spec["sheets"][0]["steps"]
+        assert len(steps) == 3
+        assert steps[0]["action"] == "sql_exec"
+        assert steps[1] == {"item": "「#btn」をクリック"}
+        assert steps[2]["action"] == "sql_exec"

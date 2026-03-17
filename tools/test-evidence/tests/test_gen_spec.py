@@ -684,3 +684,36 @@ class TestNLWarning:
         captured = capsys.readouterr()
         assert "警告" in captured.err
         assert "括弧" in captured.err
+
+
+class TestSqlExec:
+    """sql_exec アクションのバリデーション・NLテスト."""
+
+    def test_sql_exec_valid(self):
+        steps = [{"action": "sql_exec", "input": "DELETE FROM t"}]
+        errors = validate_steps("Sheet1", steps)
+        assert errors == []
+
+    def test_sql_exec_no_input(self):
+        steps = [{"action": "sql_exec"}]
+        errors = validate_steps("Sheet1", steps)
+        assert len(errors) == 1
+        assert "sql_exec" in errors[0]
+
+    def test_nl_sql_exec_prefix(self):
+        result = _interpret_natural_language(
+            {"item": "SQL実行: INSERT INTO t VALUES (1, 'x')"})
+        assert result["action"] == "sql_exec"
+        assert "INSERT INTO" in result["input"]
+
+    def test_nl_db_exec_prefix(self):
+        result = _interpret_natural_language(
+            {"item": "DB実行: DELETE FROM t WHERE id = 1"})
+        assert result["action"] == "sql_exec"
+        assert "DELETE FROM" in result["input"]
+
+    def test_nl_sql_exec_fullwidth_colon(self):
+        result = _interpret_natural_language(
+            {"item": "SQL実行：UPDATE t SET x = 1"})
+        assert result["action"] == "sql_exec"
+        assert "UPDATE" in result["input"]

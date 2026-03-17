@@ -12,6 +12,7 @@ from evidence_runner import (
     _resolve_runtime,
     _parse_retry_from_note,
     verify_download,
+    _exec_sql_sqlite,
     TestStep,
 )
 
@@ -114,3 +115,62 @@ class TestVerifyDownload:
         passed, msg = verify_download(path, step)
         assert passed is False
         path.unlink()
+
+
+class TestExecSqlSqlite:
+    """_exec_sql_sqlite のユニットテスト."""
+
+    def _create_db(self, db_path):
+        """テスト用DBを作成."""
+        import sqlite3
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)")
+        conn.commit()
+        conn.close()
+
+    def test_insert(self, tmp_path):
+        db = tmp_path / "test.db"
+        self._create_db(db)
+        affected = _exec_sql_sqlite(str(db), "INSERT INTO t VALUES (1, 'hello')")
+        assert affected >= 1
+        # 実際に挿入されたか確認
+        import sqlite3
+        conn = sqlite3.connect(str(db))
+        rows = conn.execute("SELECT * FROM t").fetchall()
+        conn.close()
+        assert len(rows) == 1
+        assert rows[0] == (1, "hello")
+
+    def test_delete(self, tmp_path):
+        db = tmp_path / "test.db"
+        self._create_db(db)
+        _exec_sql_sqlite(str(db), "INSERT INTO t VALUES (1, 'a'); INSERT INTO t VALUES (2, 'b')")
+        affected = _exec_sql_sqlite(str(db), "DELETE FROM t WHERE id = 1")
+        # total_changes は接続ごとにリセットされるので affected >= 1
+        import sqlite3
+        conn = sqlite3.connect(str(db))
+        rows = conn.execute("SELECT * FROM t").fetchall()
+        conn.close()
+        assert len(rows) == 1
+        assert rows[0][0] == 2
+
+    def test_multiple_statements(self, tmp_path):
+        db = tmp_path / "test.db"
+        self._create_db(db)
+        sql = "INSERT INTO t VALUES (1, 'a'); INSERT INTO t VALUES (2, 'b'); INSERT INTO t VALUES (3, 'c')"
+        _exec_sql_sqlite(str(db), sql)
+        import sqlite3
+        conn = sqlite3.connect(str(db))
+        count = conn.execute("SELECT COUNT(*) FROM t").fetchone()[0]
+        conn.close()
+        assert count == 3
+
+    def test_db_not_found(self):
+        with pytest.raises(RuntimeError, match="見つかりません"):
+            _exec_sql_sqlite("/nonexistent/db.sqlite", "SELECT 1")
+
+    def test_invalid_sql(self, tmp_path):
+        db = tmp_path / "test.db"
+        self._create_db(db)
+        with pytest.raises(Exception):
+            _exec_sql_sqlite(str(db), "INVALID SQL STATEMENT")

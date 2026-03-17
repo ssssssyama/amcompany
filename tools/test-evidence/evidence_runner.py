@@ -310,6 +310,10 @@ async def execute_action(page, step: TestStep, *,
         result["download_path"] = save_path
         logger.debug(f"  download: {save_path}")
 
+    elif action == "sql_exec":
+        # SQL実行はブラウザ操作ではない。run_sheet()側でDB操作を行う。
+        result["sql_exec"] = True
+
     elif action == "include":
         # 別シートの共通手順を参照実行（run_sheet側で処理するためここではpass）
         pass
@@ -929,8 +933,28 @@ async def run_sheet(page, ws, config: ProjectConfig, screenshot_dir: Path,
                     if "download_path" in action_result:
                         last_download_path = action_result["download_path"]
 
-                # スクリーンショット撮影
-                if step.action or step.verify_type == "screenshot":
+                    # sql_exec: 実際のSQL実行
+                    if action_result.get("sql_exec"):
+                        sql = step.input_val
+                        if config.db_type == "sqlite" and config.sqlite_path:
+                            affected = _exec_sql_sqlite(config.sqlite_path, sql)
+                        elif effective_a5m2_cmd and effective_a5m2_connect:
+                            affected = _exec_sql_a5m2(
+                                sql, effective_a5m2_cmd, effective_a5m2_connect)
+                        else:
+                            raise RuntimeError(
+                                "sql_exec: DB接続が設定されていません "
+                                "(config.yaml の db セクションを確認してください)")
+                        logger.info(f"  sql_exec: 影響行数={affected}")
+                        # expected が "affected:N" なら行数検証
+                        if step.expected and step.expected.startswith("affected:"):
+                            expected_count = int(step.expected.split(":")[1])
+                            if affected != expected_count:
+                                raise RuntimeError(
+                                    f"影響行数 {affected} != 期待値 {expected_count}")
+
+                # スクリーンショット撮影（sql_exec はブラウザ操作なしなのでスキップ）
+                if (step.action and step.action != "sql_exec") or step.verify_type == "screenshot":
                     screenshot_path = await take_screenshot(
                         current_page, screenshot_dir, f"{sheet_name}_{step.no}",
                     )
@@ -1013,6 +1037,45 @@ async def run_sheet(page, ws, config: ProjectConfig, screenshot_dir: Path,
     ng = sum(1 for s in steps if ws[f"{col_map['result']}{s.row}"].value == "NG")
     skip = sum(1 for s in steps if ws[f"{col_map['result']}{s.row}"].value == "SKIP")
     return ok, ng, skip, ng_details
+
+
+def _exec_sql_sqlite(db_path: str, sql: str) -> int:
+    """SQLite で更新系SQLを実行し、影響行数を返す."""
+    import sqlite3 as _sqlite3
+
+    if not db_path or not Path(db_path).exists():
+        raise RuntimeError(f"SQLiteデータベースが見つかりません: {db_path}")
+
+    conn = _sqlite3.connect(db_path)
+    try:
+        conn.executescript(sql)
+        affected = conn.total_changes
+        conn.commit()
+    finally:
+        conn.close()
+    return affected
+
+
+def _exec_sql_a5m2(sql: str, a5m2_cmd: str, a5m2_connect: str) -> int:
+    """A5M2cmd で更新系SQLを実行し、影響行数を返す（取得不可なら -1）."""
+    if not a5m2_cmd:
+        raise RuntimeError("A5M2cmdのパスが設定されていません")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        sql_path = Path(tmpdir) / "exec.sql"
+        sql_path.write_text(sql, encoding="utf-8")
+
+        cmd = [
+            a5m2_cmd,
+            f"/Connect={a5m2_connect}",
+            "/RunSQL",
+            f"/FileName={sql_path}",
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            raise RuntimeError(f"A5M2cmd エラー: {result.stderr or result.stdout}")
+
+    return -1  # A5M2 は影響行数を直接取得できない
 
 
 def _run_setup_teardown_sql(db_path: str, sql: str, label: str):
