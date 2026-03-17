@@ -7,3 +7,4 @@ build/
 .env
 *.png
 !tools/thumbnail-generator/README.md
+yami-baito-reporter/reports/*.json

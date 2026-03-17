@@ -7,6 +7,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
 TOOLS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools")
+REPORTER_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "yami-baito-reporter")
 
 
 def check_module(module_name):
@@ -116,6 +117,15 @@ class ToolLauncher:
             "サムネイル生成",
             "BOOTH用620x620pxサムネイルを自動生成",
             self._launch_thumbnail,
+        )
+
+        # === 社会貢献ツール ===
+        self._add_section(scroll_frame, "社会貢献ツール")
+        self._add_tool(
+            scroll_frame,
+            "闇バイト通報支援",
+            "怪しい求人の危険度チェック＆通報先ガイド",
+            self._launch_yami_reporter,
         )
 
         # ステータスバー
@@ -387,6 +397,13 @@ class ToolLauncher:
         btn_frame.pack(pady=10)
         ttk.Button(btn_frame, text="生成", command=generate, style="Tool.TButton").pack(side="left", padx=5)
         ttk.Button(btn_frame, text="全商品一括生成", command=generate_all).pack(side="left", padx=5)
+
+    def _launch_yami_reporter(self):
+        script = os.path.join(REPORTER_DIR, "main.py")
+        if not os.path.exists(script):
+            messagebox.showerror("エラー", "闇バイト通報支援ツールが見つかりません。")
+            return
+        run_tool(script)
 
     def run(self):
         self.root.mainloop()
