@@ -81,6 +81,14 @@ def run_backtest(races, method="stat", model_path=None, min_history_races=3):
 
         # 評価
         result = evaluate_race(ranked, entries, race_info)
+
+        # Kelly戦略シミュレーション
+        from bet_optimizer import simulate_kelly_race
+        kelly_result = simulate_kelly_race(ranked, entries)
+        result["kelly_bet"] = kelly_result["bet_amount"]
+        result["kelly_payout"] = kelly_result["payout"]
+        result["kelly_skipped"] = kelly_result["skipped"]
+
         results.append(result)
 
         # 進捗表示
@@ -201,6 +209,13 @@ def compute_summary(results):
     by_grade = _aggregate_by(results, "grade")
     by_surface = _aggregate_by(results, "surface")
 
+    # Kelly戦略の集計
+    kelly_total_bet = sum(r.get("kelly_bet", 0) for r in results)
+    kelly_total_payout = sum(r.get("kelly_payout", 0) for r in results)
+    kelly_bet_count = sum(1 for r in results if not r.get("kelly_skipped", True))
+    kelly_skip_count = sum(1 for r in results if r.get("kelly_skipped", True))
+    kelly_roi = (kelly_total_payout / kelly_total_bet * 100) if kelly_total_bet > 0 else 0.0
+
     # 日付範囲
     dates = sorted(r["race_date"] for r in results)
 
@@ -220,6 +235,11 @@ def compute_summary(results):
         "by_grade": by_grade,
         "by_surface": by_surface,
         "date_range": f"{dates[0]} 〜 {dates[-1]}" if dates else "N/A",
+        "kelly_roi": kelly_roi,
+        "kelly_total_bet": kelly_total_bet,
+        "kelly_total_payout": kelly_total_payout,
+        "kelly_bet_count": kelly_bet_count,
+        "kelly_skip_count": kelly_skip_count,
     }
 
 

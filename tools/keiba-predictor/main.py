@@ -71,7 +71,15 @@ def cmd_predict(args):
         ranked = predictor.predict(features)
         method = "stat"
 
-    output = format_full_prediction(ranked, race_info, top_n=args.top, method=method)
+    # 資金配分の計算
+    allocation = None
+    if args.budget > 0:
+        from bet_optimizer import optimize_allocation
+        allocation = optimize_allocation(
+            ranked, upcoming, budget=args.budget, kelly_fraction=args.kelly
+        )
+
+    output = format_full_prediction(ranked, race_info, top_n=args.top, method=method, allocation=allocation)
     print(output)
 
 
@@ -315,6 +323,8 @@ def main():
     p_predict.add_argument("--data-dir", help="過去レースデータCSVのディレクトリ")
     p_predict.add_argument("--method", choices=["stat", "ml"], default="stat", help="予測手法 (default: stat)")
     p_predict.add_argument("--top", type=int, default=5, help="上位何頭を表示するか (default: 5)")
+    p_predict.add_argument("--budget", type=int, default=10000, help="資金配分の予算（円、default: 10000、0で無効）")
+    p_predict.add_argument("--kelly", type=float, default=0.5, help="Kelly倍率（default: 0.5 = Half Kelly）")
 
     # === fetch コマンド ===
     p_fetch = subparsers.add_parser("fetch", help="netkeiba.comからレースデータを取得")

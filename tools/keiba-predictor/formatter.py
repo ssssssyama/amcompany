@@ -166,6 +166,23 @@ def format_backtest_results(backtest_result):
                 f"回収{s['win_roi']:5.0f}%（{s['races']}レース）"
             )
 
+    # Kelly戦略比較
+    if summary.get("kelly_total_bet", 0) > 0:
+        lines.append("")
+        lines.append("--- 資金配分戦略比較（単勝）---")
+        lines.append(
+            f"  均等買い（100円/レース）: 回収率{summary['win_roi']:5.1f}%"
+        )
+        lines.append(
+            f"  Kelly戦略（1万円/レース）: 回収率{summary['kelly_roi']:5.1f}% "
+            f"（ベット{summary['kelly_bet_count']}レース / 見送り{summary['kelly_skip_count']}レース）"
+        )
+        lines.append(
+            f"  Kelly累計: 投資{summary['kelly_total_bet']:,}円 → "
+            f"払戻{summary['kelly_total_payout']:,}円 "
+            f"（損益{summary['kelly_total_payout'] - summary['kelly_total_bet']:+,}円）"
+        )
+
     # レース別詳細（直近10レース）
     if results:
         lines.append("")
@@ -190,7 +207,70 @@ def format_backtest_results(backtest_result):
     return "\n".join(lines)
 
 
-def format_full_prediction(ranked, race_info, top_n=5, method="stat"):
+def format_allocation(allocation):
+    """資金配分の結果を整形"""
+    if not allocation:
+        return ""
+
+    bets = allocation["bets"]
+    total_bet = allocation["total_bet"]
+    remaining = allocation["remaining"]
+    expected_roi = allocation["expected_roi"]
+    strategy = allocation["strategy_note"]
+    budget = total_bet + remaining
+
+    lines = [f"--- 資金配分（予算: {budget:,}円）---"]
+
+    if total_bet == 0:
+        lines.append(f"  {strategy}")
+        lines.append("")
+        lines.append("  参考: 上位馬の期待値")
+        for b in bets[:5]:
+            if not b["has_odds"]:
+                lines.append(f"  {b['horse_number']:>2}番 {b['horse_name']:<10} オッズ未取得")
+            else:
+                edge_pct = b["edge"] * 100
+                edge_sign = "+" if edge_pct >= 0 else ""
+                lines.append(
+                    f"  {b['horse_number']:>2}番 {b['horse_name']:<10} "
+                    f"{b['odds']:5.1f}倍  推定勝率{b['win_prob']:.0%}  "
+                    f"期待値{edge_sign}{edge_pct:.0f}%"
+                )
+        return "\n".join(lines)
+
+    for b in bets:
+        if not b["has_odds"]:
+            lines.append(
+                f"  【単勝】{b['horse_number']:>2}番 {b['horse_name']:<10} "
+                f"オッズ未取得  → 対象外"
+            )
+        elif b.get("amount", 0) > 0:
+            edge_pct = b["edge"] * 100
+            lines.append(
+                f"  【単勝】{b['horse_number']:>2}番 {b['horse_name']:<10} "
+                f"{b['odds']:5.1f}倍  推定勝率{b['win_prob']:.0%}  "
+                f"期待値+{edge_pct:.0f}%  → {b['amount']:,}円"
+            )
+        else:
+            edge_pct = b["edge"] * 100
+            edge_sign = "+" if edge_pct >= 0 else ""
+            lines.append(
+                f"  【単勝】{b['horse_number']:>2}番 {b['horse_name']:<10} "
+                f"{b['odds']:5.1f}倍  推定勝率{b['win_prob']:.0%}  "
+                f"期待値{edge_sign}{edge_pct:.0f}%  → 見送り"
+            )
+
+    lines.append("")
+    lines.append(
+        f"  合計ベット: {total_bet:,}円 / {budget:,}円  "
+        f"期待回収率: {expected_roi:.0f}%"
+    )
+    lines.append(f"  戦略: {strategy}")
+
+    return "\n".join(lines)
+
+
+def format_full_prediction(ranked, race_info, top_n=5, method="stat", allocation=None):
     """完全な予想結果を整形して返す"""
     method_name = "統計モデル" if method == "stat" else "機械学習モデル"
 
@@ -217,6 +297,13 @@ def format_full_prediction(ranked, race_info, top_n=5, method="stat"):
         "",
         "--- おすすめ馬券 ---",
         format_tickets(ranked),
+    ]
+
+    if allocation:
+        lines.append("")
+        lines.append(format_allocation(allocation))
+
+    lines.extend([
         "",
         "--- 分析メモ ---",
         format_analysis(ranked, min(top_n, 3)),
@@ -226,6 +313,6 @@ def format_full_prediction(ranked, race_info, top_n=5, method="stat"):
         "  ※ 馬券の購入は自己責任でお願いいたします。",
         "=" * 60,
         "",
-    ]
+    ])
 
     return "\n".join(lines)
