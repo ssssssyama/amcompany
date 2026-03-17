@@ -8,6 +8,7 @@ import threading
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from common.osc_client import create_client, send_chatbox, send_parameter
+from common.error_handler import friendly_error_handler
 
 
 def format_time(seconds: int) -> str:
@@ -145,6 +146,7 @@ def progress_bar(ratio: float, width: int = 10) -> str:
     return f"[{'█' * filled}{'░' * empty}]"
 
 
+@friendly_error_handler("OSCタイマー")
 def main():
     parser = argparse.ArgumentParser(description="OSCタイマー＆ストップウォッチ")
     parser.add_argument("--ip", default="127.0.0.1", help="VRChat OSC IP")

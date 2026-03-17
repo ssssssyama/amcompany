@@ -1,0 +1,89 @@
+# デモ用テスト定義（YAML形式）
+# python gen_spec.py demo/test_spec.yaml -o demo/demo_test_spec.xlsx で Excel に変換
+project: "デモアプリ - タスク管理"
+
+sheets:
+  # --- シート1: ログイン機能 ---
+  - name: "ログイン機能"
+    steps:
+      - { action: navigate, input: "${base_url}", item: "ログインページを開く", verify: screenshot, note: "ログイン画面が表示されること" }
+      - { action: input, selector: "#username", input: "${test_user}", item: "ユーザー名を入力" }
+      - { action: input, selector: "#password", input: "${test_pass}", item: "パスワードを入力" }
+      - { action: wait, input: "500", verify: screenshot, item: "入力状態のスクリーンショット", note: "ユーザー名・パスワードが入力されていること" }
+      - { action: click, selector: "#login-button", item: "ログインボタンを押下" }
+      - action: wait_for
+        selector: "#welcome-msg"
+        input: "10000"
+        verify: text
+        verify_target: "#welcome-msg"
+        expected: "contains:テストユーザー"
+        item: "ダッシュボード表示を待機"
+        note: "非同期レンダリング後にウェルカムメッセージが表示されること"
+      - { action: wait, input: "500", verify: screenshot, item: "ダッシュボード全体のスクリーンショット" }
+      - { verify: visible, target: "#task-tbody", item: "タスク一覧が表示されていること" }
+      - { verify: text, target: "#task-count", expected: "contains:3件", item: "タスク件数の確認" }
+      # DB検証
+      - verify: db
+        sql: "SELECT COUNT(*) FROM login_history WHERE user_id = 2 AND success = 1"
+        expected: "contains:1"
+        item: "DB: ログイン履歴が記録されていること"
+      - verify: db
+        sql: "SELECT display_name FROM users WHERE username = 'testuser'"
+        expected: "テストユーザー"
+        item: "DB: ユーザー情報の確認"
+
+  # --- シート2: 共通ログイン手順（include用） ---
+  - name: "共通ログイン手順"
+    steps:
+      - { action: navigate, input: "${base_url}" }
+      - { action: input, selector: "#username", input: "${test_user}" }
+      - { action: input, selector: "#password", input: "${test_pass}" }
+      - { action: click, selector: "#login-button" }
+      - { action: wait_for, selector: "#dashboard", input: "10000", verify: visible, verify_target: "#dashboard" }
+
+  # --- シート3: タスク管理機能 ---
+  - name: "タスク管理機能"
+    steps:
+      # 共通手順を1行で呼び出し
+      - { action: include, sheet: "共通ログイン手順", item: "共通ログイン手順を実行" }
+      # DB検証（各種プレフィックス）
+      - { verify: db, sql: "SELECT * FROM tasks", expected: "rowcount:3", item: "DB: 初期タスク件数" }
+      - { verify: db, sql: "SELECT * FROM tasks WHERE status = '完了'", expected: "not_empty", item: "DB: 完了タスクが存在する" }
+      - { verify: db, sql: "SELECT * FROM tasks WHERE title = '存在しないタスク'", expected: "empty", item: "DB: 削除済みタスクは無い" }
+      # タスク追加操作
+      - { action: input, selector: "#task-name", input: "テスト自動化の検討", item: "タスク名を入力" }
+      - { action: select, selector: "#task-priority", input: "高", item: "優先度を「高」に変更" }
+      - action: click
+        selector: "#add-task-button"
+        verify: text
+        verify_target: "#task-count"
+        expected: "contains:4件"
+        item: "タスク追加ボタンを押下"
+      # DB検証（追加後）
+      - { verify: db, sql: "SELECT * FROM tasks", expected: "rowcount:4", item: "DB: タスク追加後の行数" }
+      - { verify: db, sql: "SELECT * FROM tasks WHERE priority = '高'", expected: "rowcount:>=1", item: "DB: 高優先度タスクが1件以上ある" }
+      - verify: db
+        sql: "SELECT title, priority, status FROM tasks WHERE id = 4"
+        expected: "rows:title=テスト自動化の検討,priority=高,status=未着手"
+        item: "DB: 追加タスクの複数カラム検証"
+      # 複数テーブル突き合わせ
+      - verify: db
+        sql: "SELECT t.title, u.display_name FROM tasks t JOIN users u ON t.assigned_user_id = u.id WHERE t.id = 1"
+        expected: "rows:title=プロジェクト計画書の作成,display_name=テストユーザー"
+        item: "DB: JOIN タスク＋担当者の突き合わせ"
+      - verify: db
+        sql: "SELECT t.title, d.name AS dept FROM tasks t JOIN users u ON t.created_by = u.id JOIN departments d ON u.department_id = d.id"
+        expected: "rows_any:title=デザインレビュー,dept=開発部"
+        item: "DB: rows_any JOIN結果に特定の組み合わせが存在"
+      - verify: db
+        sql: "SELECT status FROM tasks WHERE priority = '低'"
+        expected: "rows_all:status=完了"
+        item: "DB: rows_all 全行が条件を満たす"
+      - verify: db
+        sql: "SELECT name FROM departments ORDER BY id"
+        expected: "values:開発部,営業部,総務部"
+        item: "DB: values 部署マスタの網羅確認"
+      # 画面操作・スクショ
+      - { action: wait, input: "500", verify: screenshot, item: "追加後のスクリーンショット" }
+      - { action: click, selector: "#logout-button", verify: visible, verify_target: "#login-page", item: "ログアウトボタンを押下" }
+      - { action: wait, input: "500", verify: screenshot, item: "ログアウト後のスクリーンショット" }

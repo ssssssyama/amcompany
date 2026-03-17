@@ -9,6 +9,7 @@ from datetime import date
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from common.osc_client import create_client, send_chatbox, send_parameter
+from common.error_handler import friendly_error_handler
 
 # ─── おみくじデータ ───
 
@@ -105,6 +106,7 @@ def format_omikuji(result: dict) -> str:
     return "\n".join(lines)
 
 
+@friendly_error_handler("おみくじBot")
 def main():
     parser = argparse.ArgumentParser(description="今日の運勢おみくじBot")
     parser.add_argument("--ip", default="127.0.0.1", help="VRChat OSC IP")

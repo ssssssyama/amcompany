@@ -1,0 +1,10 @@
+# 生成物（テスト実行時に自動生成されるファイル）
+*_evidence.xlsx
+*_evidence.log
+*_evidence_full.xlsx
+*_evidence_full.log
+demo_test_spec.xlsx
+screenshots/
+
+# SQLiteデータベース
+demo.db
