@@ -25,6 +25,7 @@ from openpyxl.styles import Font, PatternFill
 from PIL import Image as PILImage
 from playwright.async_api import async_playwright
 
+from gen_spec import _interpret_natural_language
 from project_config import ProjectConfig
 
 # ログ設定
@@ -84,26 +85,47 @@ def read_test_steps(ws, config: ProjectConfig) -> list[TestStep]:
     col_map = config.excel_columns
     data_start = config.excel_data_start_row
 
+    aliases = config.selector_aliases
     steps = []
     for row in range(data_start, ws.max_row + 1):
         no = ws[f"{col_map['no']}{row}"].value
         if no is None:
             continue
+
+        action_raw = ws[f"{col_map['action']}{row}"].value
+        verify_raw = ws[f"{col_map['verify_type']}{row}"].value
+        selector_raw = ws[f"{col_map['selector']}{row}"].value or ""
+        input_raw = ws[f"{col_map['input']}{row}"].value
+        verify_target_raw = ws[f"{col_map['verify_target']}{row}"].value or ""
+        expected_raw = ws[f"{col_map['expected']}{row}"].value
+        item_raw = ws[f"{col_map['item']}{row}"].value or ""
+
+        # action/verify が空なら item 欄の自然言語を解釈
+        if not action_raw and not verify_raw:
+            interpreted = _interpret_natural_language(
+                {"item": item_raw}, aliases)
+            action_raw = interpreted.get("action", action_raw)
+            verify_raw = interpreted.get("verify",
+                                         interpreted.get("verify_type", verify_raw))
+            selector_raw = interpreted.get("selector", selector_raw)
+            if "input" in interpreted and interpreted["input"] != item_raw:
+                input_raw = interpreted["input"]
+            verify_target_raw = interpreted.get("target", verify_target_raw)
+            expected_raw = interpreted.get("expected", expected_raw)
+
         step = TestStep(
             row=row,
             no=no,
-            item=ws[f"{col_map['item']}{row}"].value,
-            action=ws[f"{col_map['action']}{row}"].value,
-            selector=resolve(ws[f"{col_map['selector']}{row}"].value or ""),
+            item=item_raw,
+            action=action_raw,
+            selector=resolve(selector_raw),
             input_val=resolve(
-                str(ws[f"{col_map['input']}{row}"].value)
-                if ws[f"{col_map['input']}{row}"].value is not None else ""
+                str(input_raw) if input_raw is not None else ""
             ),
-            verify_type=ws[f"{col_map['verify_type']}{row}"].value,
-            verify_target=resolve(ws[f"{col_map['verify_target']}{row}"].value or ""),
+            verify_type=verify_raw,
+            verify_target=resolve(verify_target_raw),
             expected=resolve(
-                str(ws[f"{col_map['expected']}{row}"].value)
-                if ws[f"{col_map['expected']}{row}"].value is not None else ""
+                str(expected_raw) if expected_raw is not None else ""
             ),
             note=ws[f"{col_map['note']}{row}"].value,
         )

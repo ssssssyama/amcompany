@@ -195,6 +195,19 @@ class ProjectConfig:
         """
         return self.raw.get("test", {}).get("on_fail", "continue")
 
+    # --- セレクタ辞書 ---
+
+    @property
+    def selector_aliases(self) -> dict[str, str]:
+        """日本語名→CSSセレクタの辞書.
+
+        config.yaml の selectors セクションで定義:
+            selectors:
+              ログインボタン: "#login-btn"
+              ユーザー名欄: "#username"
+        """
+        return self.raw.get("selectors", {})
+
     # --- 変数置換 ---
 
     def resolve(self, text: str) -> str:

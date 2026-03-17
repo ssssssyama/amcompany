@@ -135,3 +135,20 @@ class TestProperties:
     def test_file_not_found(self):
         with pytest.raises(FileNotFoundError):
             ProjectConfig("/nonexistent/config.yaml")
+
+    def test_selector_aliases_default(self):
+        config = ProjectConfig()
+        assert config.selector_aliases == {}
+
+    def test_selector_aliases_from_config(self, config_file):
+        path = config_file({
+            "selectors": {
+                "ログインボタン": "#login-btn",
+                "ユーザー名欄": "#username",
+            }
+        })
+        config = ProjectConfig(path)
+        assert config.selector_aliases == {
+            "ログインボタン": "#login-btn",
+            "ユーザー名欄": "#username",
+        }

@@ -34,6 +34,122 @@ THIN_BORDER = Border(
 CENTER = Alignment(horizontal="center", vertical="center", wrap_text=True)
 LEFT = Alignment(horizontal="left", vertical="center", wrap_text=True)
 
+# --- 自然言語パターンマッチ ---
+
+# 操作パターン（優先度順）
+NL_ACTION_PATTERNS = [
+    # 「セレクタ」に「値」を入力
+    (r"「(.+?)」に「(.+?)」を入力", {"action": "input", "selector": 1, "input": 2}),
+    # 〇〇欄に「値」を入力
+    (r"(.+?)欄に「(.+?)」を入力", {"action": "input", "selector": 1, "input": 2}),
+    # 「セレクタ」で「値」を選択
+    (r"「(.+?)」で「(.+?)」を選択", {"action": "select", "selector": 1, "input": 2}),
+    # 「セレクタ」をクリック
+    (r"「(.+?)」をクリック", {"action": "click", "selector": 1}),
+    # 〇〇ボタンをクリック
+    (r"(.+?)ボタンをクリック", {"action": "click", "selector": 1}),
+    # 〇〇リンクをクリック
+    (r"(.+?)リンクをクリック", {"action": "click", "selector": 1}),
+    # 〇〇に遷移 / 〇〇を開く / 〇〇へ遷移 / 〇〇にアクセス
+    (r"「?(.+?)」?(?:に遷移|を開く|へ遷移|にアクセス)", {"action": "navigate", "input": 1}),
+    # N秒待機
+    (r"(\d+)秒待機", {"action": "wait", "input_sec": 1}),
+    # 「セレクタ」が表示されるまで待機
+    (r"「(.+?)」が表示されるまで待機", {"action": "wait_for", "selector": 1}),
+    # 「セレクタ」にマウスオーバー / ホバー
+    (r"「(.+?)」に(?:マウスオーバー|ホバー)", {"action": "hover", "selector": 1}),
+    # Enterキーを押す / Tabキーを押す / Escapeキーを押す
+    (r"(Enter|Tab|Escape)キーを押す", {"action": "keyboard", "input": 1}),
+    # 「セレクタ」の値を保存 / キャプチャ / 取得
+    (r"「(.+?)」の値を(?:保存|キャプチャ|取得)", {"action": "capture", "selector": 1}),
+    # 「ファイル」をアップロード
+    (r"「(.+?)」をアップロード", {"action": "upload", "input": 1}),
+    # 「セレクタ」までスクロール
+    (r"「(.+?)」までスクロール", {"action": "scroll", "selector": 1}),
+]
+
+# 検証パターン
+NL_VERIFY_PATTERNS = [
+    # 「セレクタ」に「値」と表示
+    (r"「(.+?)」に「(.+?)」と表示", {"verify": "text", "target": 1, "expected": 2}),
+    # 「セレクタ」に「値」を含む
+    (r"「(.+?)」に「(.+?)」を含む", {"verify": "text", "target": 1, "expected_prefix": "contains:", "expected": 2}),
+    # 「セレクタ」が表示されること / 「セレクタ」が表示される
+    (r"「(.+?)」が表示される(?:こと)?", {"verify": "visible", "target": 1}),
+    # 「セレクタ」が非表示
+    (r"「(.+?)」が非表示", {"verify": "hidden", "target": 1}),
+    # URLが「値」であること
+    (r"URLが「(.+?)」", {"verify": "url", "expected": 1}),
+    # スクリーンショットを取得 / スクリーンショット
+    (r"スクリーンショット(?:を取得)?", {"verify": "screenshot"}),
+]
+
+
+def _interpret_natural_language(step_def: dict, selector_aliases: dict | None = None) -> dict:
+    """テスト項目(item)の自然言語記述を構造化フィールドに変換する.
+
+    action / verify_type が既に指定されている場合はスキップ（明示指定を優先）。
+
+    Args:
+        step_def: ステップ定義の辞書
+        selector_aliases: 日本語名→CSSセレクタの辞書（任意）
+
+    Returns:
+        構造化フィールドが補完されたステップ定義
+    """
+    if step_def.get("action") or step_def.get("verify") or step_def.get("verify_type"):
+        return step_def
+
+    text = step_def.get("item", "").strip()
+    if not text:
+        return step_def
+
+    aliases = selector_aliases or {}
+    result = dict(step_def)
+
+    def _resolve_selector(raw: str) -> str:
+        """セレクタ辞書で日本語名をCSSセレクタに解決する."""
+        return aliases.get(raw, raw)
+
+    # 操作パターンを試行
+    for pattern, mapping in NL_ACTION_PATTERNS:
+        m = re.search(pattern, text)
+        if m:
+            for key, val in mapping.items():
+                if key == "input_sec":
+                    result["input"] = str(int(m.group(val)) * 1000)
+                elif isinstance(val, int):
+                    captured = m.group(val)
+                    if key == "selector":
+                        captured = _resolve_selector(captured)
+                    result[key] = captured
+                else:
+                    result[key] = val
+            return result
+
+    # 検証パターンを試行
+    for pattern, mapping in NL_VERIFY_PATTERNS:
+        m = re.search(pattern, text)
+        if m:
+            prefix = mapping.get("expected_prefix", "")
+            for key, val in mapping.items():
+                if key == "expected_prefix":
+                    continue
+                if isinstance(val, int):
+                    captured = m.group(val)
+                    if key == "target":
+                        captured = _resolve_selector(captured)
+                    if key == "expected" and prefix:
+                        result[key] = prefix + captured
+                    else:
+                        result[key] = captured
+                else:
+                    result[key] = val
+            return result
+
+    return result
+
+
 VALID_ACTIONS = {
     "navigate", "click", "input", "select", "wait", "wait_for",
     "upload", "hover", "scroll", "keyboard",
@@ -100,7 +216,8 @@ def create_sheet(wb, sheet_name, test_cases, project_name="", is_first=False):
     return ws
 
 
-def normalize_step(step_def: dict, step_no: int) -> dict:
+def normalize_step(step_def: dict, step_no: int,
+                    selector_aliases: dict | None = None) -> dict:
     """YAML上の短縮記法を正規化する.
 
     短縮記法:
@@ -108,7 +225,14 @@ def normalize_step(step_def: dict, step_no: int) -> dict:
         - { verify: text, target: "#msg", expected: "OK" }
         - { verify: db, sql: "SELECT ...", expected: "rowcount:3" }
         - { action: include, sheet: "共通ログイン" }
+
+    自然言語:
+        - { item: "「#btn」をクリック" }
+        - { item: "「#msg」に「OK」と表示" }
     """
+    # 自然言語解釈（action/verify が未指定の場合のみ）
+    step_def = _interpret_natural_language(step_def, selector_aliases)
+
     tc = {"no": step_no}
 
     # item（テスト項目名）
@@ -282,13 +406,15 @@ def gen_spec(yaml_path: str, output_path: str | None = None):
         sys.exit(1)
 
     project_name = spec.get("project", "")
+    selector_aliases = spec.get("selectors", {})
 
-    # バリデーション
+    # NL解釈後にバリデーション（NLで補完されたフィールドも検証対象にする）
     all_errors = []
     for sheet_def in sheets:
         name = sheet_def.get("name", "Sheet")
         steps = sheet_def.get("steps", [])
-        all_errors.extend(validate_steps(name, steps))
+        interpreted_steps = [_interpret_natural_language(s, selector_aliases) for s in steps]
+        all_errors.extend(validate_steps(name, interpreted_steps))
 
     if all_errors:
         print("バリデーションエラー:", file=sys.stderr)
@@ -306,7 +432,7 @@ def gen_spec(yaml_path: str, output_path: str | None = None):
         data_source = sheet_def.get("data_source")
         if data_source:
             steps = _expand_data_source(steps, data_source, yaml_dir)
-        test_cases = [normalize_step(s, j + 1) for j, s in enumerate(steps)]
+        test_cases = [normalize_step(s, j + 1, selector_aliases) for j, s in enumerate(steps)]
         create_sheet(wb, name, test_cases, project_name, is_first=(i == 0))
 
     if output_path is None:
