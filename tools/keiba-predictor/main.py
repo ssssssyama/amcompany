@@ -15,7 +15,7 @@ from data_manager import (
 )
 from feature_engine import compute_all_features
 from predictor import StatisticalPredictor, MLPredictor, train_ml_model
-from formatter import format_full_prediction
+from formatter import format_full_prediction, format_backtest_results
 
 DEFAULT_DB = os.path.join(os.path.dirname(__file__), "data", "keiba.db")
 DEFAULT_SAMPLE_DIR = os.path.join(os.path.dirname(__file__), "sample_data")
@@ -225,6 +225,34 @@ def cmd_import_csv(args):
     print(f"{count}件のデータをインポートしました → {args.db}")
 
 
+def cmd_backtest(args):
+    """バックテストを実行"""
+    from backtester import run_backtest
+
+    print("データを読み込んでいます...")
+    races = _load_races_auto(args)
+
+    if not races:
+        print("データがありません。先に fetch または import-csv でデータを準備してください。")
+        return
+
+    method = args.method
+    model_path = None
+    if method == "ml":
+        model_path = os.path.join(os.path.dirname(__file__), "models", "model.pkl")
+
+    print(f"バックテストを実行しています（手法: {'統計モデル' if method == 'stat' else '機械学習モデル'}）...")
+    result = run_backtest(
+        races,
+        method=method,
+        model_path=model_path,
+        min_history_races=args.min_history,
+    )
+
+    output = format_backtest_results(result)
+    print(output)
+
+
 def cmd_sample(args):
     """使い方ガイドを表示"""
     print("")
@@ -270,6 +298,7 @@ def main():
             "  python main.py list --date 2025-03-17         # レース一覧\n"
             "  python main.py predict --race-id 202503170511 # レースID指定で予想\n"
             "  python main.py predict --race upcoming.csv    # CSV指定で予想\n"
+            "  python main.py backtest                       # バックテスト\n"
             "  python main.py train                          # MLモデル学習\n"
             "  python main.py info                           # データ概要\n"
             "  python main.py sample                         # 使い方ガイド"
@@ -305,6 +334,13 @@ def main():
     p_import.add_argument("--file", required=True, help="インポートするCSVファイル")
     p_import.add_argument("--db", default=DEFAULT_DB, help="保存先DB (default: data/keiba.db)")
 
+    # === backtest コマンド ===
+    p_backtest = subparsers.add_parser("backtest", help="過去データでバックテスト（精度検証）")
+    p_backtest.add_argument("--db", default=DEFAULT_DB, help="データベースファイル (default: data/keiba.db)")
+    p_backtest.add_argument("--data-dir", help="データCSVのディレクトリ")
+    p_backtest.add_argument("--method", choices=["stat", "ml"], default="stat", help="予測手法 (default: stat)")
+    p_backtest.add_argument("--min-history", type=int, default=3, help="最低限必要な履歴レース数 (default: 3)")
+
     # === train コマンド ===
     p_train = subparsers.add_parser("train", help="MLモデルを学習")
     p_train.add_argument("--db", default=DEFAULT_DB, help="学習データDB (default: data/keiba.db)")
@@ -334,6 +370,7 @@ def main():
         "fetch": cmd_fetch,
         "list": cmd_list,
         "import-csv": cmd_import_csv,
+        "backtest": cmd_backtest,
         "train": cmd_train,
         "info": cmd_info,
         "sample": cmd_sample,
