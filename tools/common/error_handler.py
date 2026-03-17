@@ -34,6 +34,16 @@ ERROR_MESSAGES = {
             "以下のコマンドを実行してください:\n"
             "  pip install -r requirements-footstep.txt"
         ),
+        "pandas": (
+            "pandas パッケージがインストールされていません。\n"
+            "以下のコマンドを実行してください:\n"
+            "  pip install -r requirements-keiba.txt"
+        ),
+        "sklearn": (
+            "scikit-learn パッケージがインストールされていません。\n"
+            "以下のコマンドを実行してください:\n"
+            "  pip install -r requirements-keiba.txt"
+        ),
     },
     "OSError": {
         "99": (

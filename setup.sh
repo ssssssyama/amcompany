@@ -40,6 +40,19 @@ echo "========================================"
 echo "  追加オプション"
 echo "========================================"
 echo ""
+echo "競馬予想ツール（pandas + scikit-learn）も使いますか？"
+echo ""
+read -p "インストールする場合は y を入力: " KEIBA_CHOICE
+
+if [ "$KEIBA_CHOICE" = "y" ] || [ "$KEIBA_CHOICE" = "Y" ]; then
+    echo ""
+    echo "--- 競馬予想ツール用パッケージをインストール中 ---"
+    $PYTHON -m pip install -r requirements-keiba.txt
+    echo ""
+    echo "[OK] 競馬予想ツールのセットアップ完了"
+fi
+
+echo ""
 echo "AI系ツール（足音生成・テクスチャ高画質化）も"
 echo "使いますか？（GPUが必要です）"
 echo ""

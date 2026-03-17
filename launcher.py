@@ -109,6 +109,15 @@ class ToolLauncher:
             self._launch_footstep,
         )
 
+        # === 分析ツール ===
+        self._add_section(scroll_frame, "分析ツール")
+        self._add_tool(
+            scroll_frame,
+            "JRA競馬予想",
+            "過去データ分析で馬券予想を生成",
+            self._launch_keiba,
+        )
+
         # === その他 ===
         self._add_section(scroll_frame, "その他")
         self._add_tool(
@@ -333,6 +342,66 @@ class ToolLauncher:
             return
         script = os.path.join(TOOLS_DIR, "footstep-generator", "generate.py")
         run_tool(script)
+
+    def _launch_keiba(self):
+        self._open_keiba_window()
+
+    def _open_keiba_window(self):
+        win = tk.Toplevel(self.root)
+        win.title("JRA競馬予想")
+        win.geometry("450x350")
+        win.resizable(False, False)
+
+        ttk.Label(win, text="JRA競馬予想", style="Section.TLabel").pack(pady=(10, 5))
+
+        # レースCSV選択
+        file_frame = ttk.LabelFrame(win, text="予測対象レースCSV", padding=10)
+        file_frame.pack(fill="x", padx=15, pady=5)
+        file_var = tk.StringVar()
+        ttk.Entry(file_frame, textvariable=file_var, width=30).pack(side="left", fill="x", expand=True)
+
+        def browse():
+            path = filedialog.askopenfilename(
+                title="予測対象CSVを選択",
+                filetypes=[("CSVファイル", "*.csv"), ("すべて", "*.*")],
+            )
+            if path:
+                file_var.set(path)
+
+        ttk.Button(file_frame, text="参照", command=browse).pack(side="left", padx=(5, 0))
+
+        # 予測手法
+        method_var = tk.StringVar(value="stat")
+        method_frame = ttk.LabelFrame(win, text="予測手法", padding=10)
+        method_frame.pack(fill="x", padx=15, pady=5)
+        ttk.Radiobutton(method_frame, text="統計モデル（推奨）", variable=method_var, value="stat").pack(anchor="w")
+        ttk.Radiobutton(method_frame, text="機械学習モデル（要学習）", variable=method_var, value="ml").pack(anchor="w")
+
+        # 表示頭数
+        top_frame = ttk.LabelFrame(win, text="表示する上位頭数", padding=10)
+        top_frame.pack(fill="x", padx=15, pady=5)
+        top_var = tk.StringVar(value="5")
+        ttk.Entry(top_frame, textvariable=top_var, width=5).pack(side="left")
+        ttk.Label(top_frame, text="頭").pack(side="left", padx=5)
+
+        def predict():
+            path = file_var.get().strip()
+            if not path:
+                # デフォルトでサンプルを使用
+                path = os.path.join(TOOLS_DIR, "keiba-predictor", "sample_data", "upcoming.csv")
+            script = os.path.join(TOOLS_DIR, "keiba-predictor", "main.py")
+            args = ["predict", "--race", path, "--method", method_var.get(), "--top", top_var.get()]
+            run_tool(script, args)
+
+        btn_frame = ttk.Frame(win)
+        btn_frame.pack(pady=10)
+        ttk.Button(btn_frame, text="予想する", command=predict, style="Tool.TButton").pack(side="left", padx=5)
+
+        def show_info():
+            script = os.path.join(TOOLS_DIR, "keiba-predictor", "main.py")
+            run_tool(script, ["info"])
+
+        ttk.Button(btn_frame, text="データ概要", command=show_info).pack(side="left", padx=5)
 
     def _launch_thumbnail(self):
         if not check_module("PIL"):
