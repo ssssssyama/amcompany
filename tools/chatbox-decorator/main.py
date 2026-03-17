@@ -8,6 +8,7 @@ import threading
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from common.osc_client import create_client, send_chatbox, send_typing
+from common.error_handler import friendly_error_handler
 
 # ─── 装飾テンプレート ───
 
@@ -128,6 +129,7 @@ def interactive_mode(client, frame: str, style: str | None, typing: bool, delay:
         send_typing(client, False)
 
 
+@friendly_error_handler("Chatbox デコレーター")
 def main():
     parser = argparse.ArgumentParser(description="VRC Chatbox デコレーター")
     parser.add_argument("--ip", default="127.0.0.1", help="VRChat OSC IP (default: 127.0.0.1)")
