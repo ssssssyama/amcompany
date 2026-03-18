@@ -1,12 +1,10 @@
 @echo off
-chcp 65001 >/dev/null 2>&1
-echo おみくじBot を起動します...
-echo.
+chcp 65001 >nul 2>&1
 cd /d "%~dp0"
-python main.py %*
+python gui.py
 if %errorlevel% neq 0 (
     echo.
-    echo [エラー] ツールの起動に失敗しました。
+    echo [エラー] 起動に失敗しました。
     echo   setup.bat を先に実行してください。
+    pause
 )
-pause
