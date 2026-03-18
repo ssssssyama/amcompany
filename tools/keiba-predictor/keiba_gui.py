@@ -1,15 +1,24 @@
-"""JRA競馬予想ツール — GUI版"""
+"""JRA競馬予想ツール — GUI版（exe化対応）"""
 
 import os
 import sys
 import re
-import subprocess
+import contextlib
+import io
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-MAIN_PY = os.path.join(SCRIPT_DIR, "main.py")
+# frozen (PyInstaller) / 通常実行 両対応のパス解決
+if getattr(sys, "frozen", False):
+    SCRIPT_DIR = os.path.dirname(sys.executable)
+else:
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# main.py の関数群を直接 import できるようにパスを通す
+sys.path.insert(0, SCRIPT_DIR)
+sys.path.insert(0, os.path.join(SCRIPT_DIR, ".."))
+
 DEFAULT_DB = os.path.join(SCRIPT_DIR, "data", "keiba.db")
 
 
@@ -379,7 +388,7 @@ class KeibaGUI:
         return frame, text
 
     def _run_command(self, args, text_widget):
-        """main.pyをサブプロセスで実行し、出力をテキストウィジェットにストリーム表示"""
+        """main.pyの関数を直接呼び出し、出力をテキストウィジェットに表示（exe化対応）"""
         if self._running:
             messagebox.showwarning("実行中", "別のコマンドが実行中です。\n完了までお待ちください。")
             return
@@ -389,27 +398,34 @@ class KeibaGUI:
 
         def worker():
             try:
-                proc = subprocess.Popen(
-                    [sys.executable, MAIN_PY] + args,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    cwd=SCRIPT_DIR,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                )
-                for line in proc.stdout:
-                    text_widget.after(0, append_line, line)
-                proc.wait()
-                if proc.returncode != 0:
-                    text_widget.after(0, append_line, f"\n[終了コード: {proc.returncode}]\n")
+                # main.py の argparse を流用してコマンドを実行
+                import main as keiba_main
+
+                old_argv = sys.argv
+                sys.argv = ["keiba"] + args
+
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                    try:
+                        keiba_main.main()
+                    except SystemExit:
+                        pass
+
+                sys.argv = old_argv
+                output = buf.getvalue()
+                if output:
+                    text_widget.after(0, append_text, output)
+                else:
+                    text_widget.after(0, append_text, "(出力なし)\n")
             except Exception as e:
-                text_widget.after(0, lambda: messagebox.showerror("エラー", str(e)))
+                import traceback
+                err = traceback.format_exc()
+                text_widget.after(0, append_text, f"エラーが発生しました:\n{err}\n")
             finally:
                 text_widget.after(0, lambda: self._set_running(False))
 
-        def append_line(line):
-            text_widget.insert("end", line)
+        def append_text(txt):
+            text_widget.insert("end", txt)
             text_widget.see("end")
 
         threading.Thread(target=worker, daemon=True).start()

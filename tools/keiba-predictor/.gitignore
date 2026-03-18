@@ -1,2 +1,5 @@
 models/*.pkl
 data/*.db
+build/
+dist/
+*.spec
