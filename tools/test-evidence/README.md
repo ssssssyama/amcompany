@@ -301,3 +301,64 @@ __ConnectionType=Internal;ProviderName=MSSQL;UserName=user;Password=pass;ServerN
 2. `A5M2cmd.exe /Connect=... /RunSQL /FileName=...` で実行
 3. 出力されたCSV（Query-1.csv）を読み取り
 4. 1行目の1列目の値を「期待値」列と照合してOK/NG判定
+
+## exe 版ビルド（Python 環境不要で配布）
+
+PyInstaller を使い、Python 環境がないマシンでも実行できる exe ファイルを生成できます。
+
+### ビルド手順
+
+**Windows（推奨）:**
+
+```bat
+cd tools\test-evidence
+build_exe.bat
+```
+
+**手動:**
+
+```bash
+cd tools/test-evidence
+pip install pyinstaller
+python build_exe.py
+```
+
+### 出力
+
+`dist/test-evidence/` に以下が生成されます:
+
+| フォルダ | 内容 |
+|---------|------|
+| `evidence-runner/` | テスト実行エンジン（メインツール） |
+| `gen-spec/` | テスト定義 → Excel 変換 |
+| `record2spec/` | Playwright 録画 → YAML 変換 |
+| `text2spec/` | プレーンテキスト → YAML/Excel 変換 |
+| `create-template/` | Excel テンプレート生成 |
+| `examples/` | サンプルファイル |
+| `install-browsers.bat/.sh` | Chromium ブラウザインストーラ |
+
+### exe 版の利用者向けセットアップ
+
+テスト実行（evidence-runner）には Chromium ブラウザが必要です。
+初回のみ以下を実行してください:
+
+```bat
+:: Windows
+install-browsers.bat
+
+:: macOS/Linux
+./install-browsers.sh
+```
+
+### exe 版の使用例
+
+```bat
+:: テスト実行
+evidence-runner\evidence-runner.exe spec.xlsx -c config.yaml -o output.xlsx --headed
+
+:: テスト定義からExcel生成
+gen-spec\gen-spec.exe test_spec.yaml -o spec.xlsx
+
+:: Playwright録画からYAML変換
+record2spec\record2spec.exe recorded.py -o test_spec.yaml
+```
