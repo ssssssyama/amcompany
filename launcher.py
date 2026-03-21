@@ -109,6 +109,15 @@ class ToolLauncher:
             self._launch_footstep,
         )
 
+        # === 不動産ツール ===
+        self._add_section(scroll_frame, "不動産ツール")
+        self._add_tool(
+            scroll_frame,
+            "物件写真エンハンサー",
+            "物件写真をAIで一括高品質化（補正・青空・ブラー・高画質化）",
+            self._launch_photo_enhancer,
+        )
+
         # === その他 ===
         self._add_section(scroll_frame, "その他")
         self._add_tool(
@@ -333,6 +342,111 @@ class ToolLauncher:
             return
         script = os.path.join(TOOLS_DIR, "footstep-generator", "generate.py")
         run_tool(script)
+
+    def _launch_photo_enhancer(self):
+        if not check_module("cv2"):
+            messagebox.showwarning(
+                "未インストール",
+                "物件写真エンハンサーの依存パッケージがインストールされていません。\n\n"
+                "以下のコマンドを実行してください:\n"
+                "pip install -r requirements-photo-enhancer.txt",
+            )
+            return
+        self._open_photo_enhancer_window()
+
+    def _open_photo_enhancer_window(self):
+        win = tk.Toplevel(self.root)
+        win.title("物件写真AIエンハンサー")
+        win.geometry("450x480")
+        win.resizable(False, False)
+
+        ttk.Label(win, text="物件写真AIエンハンサー", style="Section.TLabel").pack(pady=(10, 5))
+        ttk.Label(win, text="不動産物件写真をAIで一括高品質化します", style="Desc.TLabel").pack()
+
+        # 入力選択
+        input_frame = ttk.LabelFrame(win, text="入力", padding=10)
+        input_frame.pack(fill="x", padx=15, pady=5)
+        input_var = tk.StringVar()
+        ttk.Entry(input_frame, textvariable=input_var, width=35).pack(side="left", fill="x", expand=True)
+
+        def browse_file():
+            path = filedialog.askopenfilename(
+                title="物件写真を選択",
+                filetypes=[("画像ファイル", "*.png *.jpg *.jpeg *.bmp *.tiff *.webp"), ("すべて", "*.*")],
+            )
+            if path:
+                input_var.set(path)
+
+        def browse_folder():
+            path = filedialog.askdirectory(title="物件写真フォルダを選択")
+            if path:
+                input_var.set(path)
+
+        ttk.Button(input_frame, text="ファイル", command=browse_file).pack(side="left", padx=2)
+        ttk.Button(input_frame, text="フォルダ", command=browse_folder).pack(side="left", padx=2)
+
+        # 処理オプション
+        opt_frame = ttk.LabelFrame(win, text="処理内容", padding=10)
+        opt_frame.pack(fill="x", padx=15, pady=5)
+
+        adjust_var = tk.BooleanVar(value=True)
+        sky_var = tk.BooleanVar(value=True)
+        blur_var = tk.BooleanVar(value=True)
+        upscale_var = tk.BooleanVar(value=True)
+
+        ttk.Checkbutton(opt_frame, text="明るさ・コントラスト・ホワイトバランス自動補正", variable=adjust_var).pack(anchor="w")
+        ttk.Checkbutton(opt_frame, text="曇天→青空置換（外観写真向け）", variable=sky_var).pack(anchor="w")
+        ttk.Checkbutton(opt_frame, text="プライバシーブラー（顔を自動検出してぼかし）", variable=blur_var).pack(anchor="w")
+        ttk.Checkbutton(opt_frame, text="AI高画質化 — Real-ESRGAN（GPU推奨）", variable=upscale_var).pack(anchor="w")
+
+        # デバイス選択
+        dev_frame = ttk.LabelFrame(win, text="デバイス", padding=10)
+        dev_frame.pack(fill="x", padx=15, pady=5)
+        device_var = tk.StringVar(value="cuda")
+        ttk.Radiobutton(dev_frame, text="GPU（NVIDIA/AMD）", variable=device_var, value="cuda").pack(side="left", padx=5)
+        ttk.Radiobutton(dev_frame, text="CPU（低速）", variable=device_var, value="cpu").pack(side="left", padx=5)
+
+        # 注意書き
+        note_frame = ttk.Frame(win, padding=(15, 5))
+        note_frame.pack(fill="x")
+        ttk.Label(
+            note_frame,
+            text="※ 青空置換を使用した画像は掲載時にCG加工済みの旨を表示してください",
+            style="Desc.TLabel",
+            foreground="gray",
+            wraplength=400,
+        ).pack(anchor="w")
+
+        def run():
+            path = input_var.get().strip()
+            if not path:
+                messagebox.showinfo("入力エラー", "画像ファイルまたはフォルダを選択してください")
+                return
+
+            script = os.path.join(TOOLS_DIR, "photo-enhancer", "enhance.py")
+            args = [path]
+            if not adjust_var.get():
+                args.append("--no-adjust")
+            if not sky_var.get():
+                args.append("--no-sky")
+            if not blur_var.get():
+                args.append("--no-blur")
+            if not upscale_var.get():
+                args.append("--no-upscale")
+            args.extend(["--device", device_var.get()])
+
+            if upscale_var.get() and not check_module("realesrgan"):
+                messagebox.showwarning(
+                    "未インストール",
+                    "AI高画質化にはReal-ESRGANが必要です。\n\n"
+                    "pip install -r requirements-photo-enhancer.txt\n\n"
+                    "高画質化なしで実行する場合は、チェックを外してください。",
+                )
+                return
+
+            run_tool(script, args)
+
+        ttk.Button(win, text="処理開始", command=run, style="Tool.TButton").pack(pady=15)
 
     def _launch_thumbnail(self):
         if not check_module("PIL"):
