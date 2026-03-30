@@ -5,7 +5,7 @@ import android.webkit.WebView
 class SpeedControlManager {
 
     companion object {
-        val SPEEDS = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f, 3.0f)
+        val SPEEDS = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 8.0f)
         const val DEFAULT_SPEED = 1.0f
     }
 
