@@ -1,7 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Shorts Speed Player</string>
-    <string name="url_hint">YouTube Shorts URL を貼り付け</string>
-    <string name="btn_go">再生</string>
-    <string name="btn_browse">一覧</string>
 </resources>

@@ -12,8 +12,6 @@ import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.widget.FrameLayout
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.amcompany.shortsspeed.databinding.ActivityMainBinding
 import com.google.android.material.chip.Chip
@@ -25,6 +23,7 @@ class MainActivity : AppCompatActivity() {
     private var webView: WebView? = null
     private var fullscreenView: View? = null
     private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
+    private var speedPanelVisible = false
 
     companion object {
         private const val SHORTS_BASE_URL = "https://www.youtube.com/shorts"
@@ -40,11 +39,12 @@ class MainActivity : AppCompatActivity() {
         speedManager = SpeedControlManager()
 
         setupWebView()
-        setupSpeedChips()
-        setupUrlInput()
+        setupSpeedControls()
 
-        // Handle intent (shared URL)
-        handleIntent(intent)
+        // Handle intent or load default
+        if (!handleIntent(intent)) {
+            loadUrl(SHORTS_BASE_URL)
+        }
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -52,14 +52,15 @@ class MainActivity : AppCompatActivity() {
         intent?.let { handleIntent(it) }
     }
 
-    private fun handleIntent(intent: Intent) {
+    private fun handleIntent(intent: Intent): Boolean {
         val url = intent.dataString
             ?: intent.getStringExtra(Intent.EXTRA_TEXT)
 
         if (url != null && url.contains("shorts")) {
-            binding.urlInput.setText(url)
             loadUrl(url)
+            return true
         }
+        return false
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -75,7 +76,6 @@ class MainActivity : AppCompatActivity() {
             settings.useWideViewPort = true
             settings.setSupportZoom(false)
 
-            // Enable cookies
             CookieManager.getInstance().setAcceptCookie(true)
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
 
@@ -88,10 +88,7 @@ class MainActivity : AppCompatActivity() {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
                     binding.progressBar.visibility = View.GONE
-                    // Inject speed after page loads
-                    view?.let {
-                        speedManager.injectSpeed(it)
-                    }
+                    view?.let { speedManager.injectSpeed(it) }
                 }
 
                 override fun shouldOverrideUrlLoading(
@@ -99,11 +96,9 @@ class MainActivity : AppCompatActivity() {
                     request: WebResourceRequest?
                 ): Boolean {
                     val url = request?.url?.toString() ?: return false
-                    // Keep YouTube navigation in WebView
                     if (url.contains("youtube.com") || url.contains("youtu.be")) {
                         return false
                     }
-                    // Open external links in browser
                     startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
                     return true
                 }
@@ -134,7 +129,13 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun setupSpeedChips() {
+    private fun setupSpeedControls() {
+        // Floating button toggles speed panel
+        binding.btnSpeedToggle.setOnClickListener {
+            toggleSpeedPanel()
+        }
+
+        // Build speed chips
         val chipGroup = binding.speedChipGroup
         chipGroup.removeAllViews()
 
@@ -145,48 +146,47 @@ class MainActivity : AppCompatActivity() {
                 isChecked = speed == speedManager.currentSpeed
                 setOnClickListener {
                     speedManager.setSpeed(webView, speed)
-                    updateChipSelection(speed)
+                    updateSpeedUI(speed)
+                    // Auto-close panel after selection
+                    hideSpeedPanel()
                 }
             }
             chipGroup.addView(chip)
         }
 
         speedManager.onSpeedChanged = { speed ->
-            updateChipSelection(speed)
+            updateSpeedUI(speed)
         }
     }
 
-    private fun updateChipSelection(selectedSpeed: Float) {
+    private fun toggleSpeedPanel() {
+        if (speedPanelVisible) {
+            hideSpeedPanel()
+        } else {
+            showSpeedPanel()
+        }
+    }
+
+    private fun showSpeedPanel() {
+        binding.speedPanel.visibility = View.VISIBLE
+        binding.speedPanel.animate().alpha(0.92f).setDuration(150).start()
+        speedPanelVisible = true
+    }
+
+    private fun hideSpeedPanel() {
+        binding.speedPanel.animate().alpha(0f).setDuration(150).withEndAction {
+            binding.speedPanel.visibility = View.GONE
+        }.start()
+        speedPanelVisible = false
+    }
+
+    private fun updateSpeedUI(speed: Float) {
+        binding.btnSpeedToggle.text = speedManager.formatSpeed(speed)
         val chipGroup = binding.speedChipGroup
-        SpeedControlManager.SPEEDS.forEachIndexed { index, speed ->
+        SpeedControlManager.SPEEDS.forEachIndexed { index, s ->
             val chip = chipGroup.getChildAt(index) as? Chip
-            chip?.isChecked = speed == selectedSpeed
+            chip?.isChecked = s == speed
         }
-    }
-
-    private fun setupUrlInput() {
-        binding.btnGo.setOnClickListener {
-            val url = binding.urlInput.text?.toString()?.trim() ?: ""
-            if (url.isNotEmpty()) {
-                val finalUrl = normalizeUrl(url)
-                loadUrl(finalUrl)
-            }
-        }
-
-        binding.btnBrowse.setOnClickListener {
-            binding.urlInput.setText("")
-            loadUrl(SHORTS_BASE_URL)
-        }
-
-        // Load shorts feed by default
-        loadUrl(SHORTS_BASE_URL)
-    }
-
-    private fun normalizeUrl(input: String): String {
-        if (input.startsWith("http://") || input.startsWith("https://")) {
-            return input
-        }
-        return "https://$input"
     }
 
     private fun loadUrl(url: String) {
@@ -196,6 +196,7 @@ class MainActivity : AppCompatActivity() {
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         when {
+            speedPanelVisible -> hideSpeedPanel()
             fullscreenView != null -> {
                 fullscreenCallback?.onCustomViewHidden()
                 binding.fullscreenContainer.removeAllViews()
