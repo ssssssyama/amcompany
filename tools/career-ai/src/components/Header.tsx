@@ -41,6 +41,12 @@ export function Header() {
             >
               料金プラン
             </Link>
+            <Link
+              href="/blog"
+              className="text-gray-600 hover:text-gray-900 font-medium"
+            >
+              コラム
+            </Link>
           </div>
 
           <div className="hidden md:flex items-center gap-4">
@@ -111,6 +117,13 @@ export function Header() {
               onClick={() => setMobileMenuOpen(false)}
             >
               料金プラン
+            </Link>
+            <Link
+              href="/blog"
+              className="block px-3 py-2 text-gray-600 hover:bg-gray-50 rounded-lg"
+              onClick={() => setMobileMenuOpen(false)}
+            >
+              コラム
             </Link>
             <Link
               href="/resume/new"

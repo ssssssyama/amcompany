@@ -43,6 +43,11 @@ export function Footer() {
                   料金プラン
                 </Link>
               </li>
+              <li>
+                <Link href="/blog" className="hover:text-gray-700">
+                  転職お役立ちコラム
+                </Link>
+              </li>
             </ul>
           </div>
         </div>

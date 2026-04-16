@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { EmailCapture } from "@/components/EmailCapture";
 
 const features = [
   {
@@ -120,8 +121,77 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Features Section */}
+      {/* Before / After Section */}
       <section className="py-20 px-4">
+        <div className="max-w-5xl mx-auto">
+          <h2 className="text-3xl font-bold text-center text-gray-900 mb-4">
+            AIが職務経歴書を劇的に改善
+          </h2>
+          <p className="text-center text-gray-500 mb-12">
+            あなたの経歴をプロが書いたような文書に変換します
+          </p>
+
+          <div className="grid md:grid-cols-2 gap-6">
+            <div className="bg-red-50 border border-red-200 rounded-xl p-6">
+              <div className="flex items-center gap-2 mb-4">
+                <span className="bg-red-100 text-red-600 text-xs font-bold px-2 py-1 rounded">
+                  BEFORE
+                </span>
+                <span className="text-sm text-red-600 font-medium">
+                  自分で書いた場合
+                </span>
+              </div>
+              <div className="text-sm text-gray-600 space-y-3 leading-relaxed">
+                <p>
+                  株式会社○○でWebエンジニアとして<span className="bg-red-100 px-1">勤務していました</span>。
+                  主にバックエンド開発を<span className="bg-red-100 px-1">担当しました</span>。
+                  チームで<span className="bg-red-100 px-1">いろいろな</span>プロジェクトに参加しました。
+                </p>
+                <p>
+                  <span className="bg-red-100 px-1">いくつかの</span>新機能の開発や
+                  既存機能の改善を<span className="bg-red-100 px-1">行いました</span>。
+                  Pythonを使った開発<span className="bg-red-100 px-1">もしていました</span>。
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-green-50 border border-green-200 rounded-xl p-6">
+              <div className="flex items-center gap-2 mb-4">
+                <span className="bg-green-100 text-green-600 text-xs font-bold px-2 py-1 rounded">
+                  AFTER
+                </span>
+                <span className="text-sm text-green-600 font-medium">
+                  AIが生成した場合
+                </span>
+              </div>
+              <div className="text-sm text-gray-600 space-y-3 leading-relaxed">
+                <p>
+                  株式会社○○にて、<strong>バックエンドエンジニアとして3年間従事</strong>。
+                  Python/FastAPIを用いたAPIサーバーの設計・開発を<strong>主導</strong>。
+                </p>
+                <p>
+                  <strong>5名のチームリーダー</strong>として新規マイクロサービスの立ち上げを推進し、
+                  APIレスポンスタイムを<strong>40%改善</strong>。
+                  年間<strong>12件の機能リリース</strong>を完遂し、
+                  ユーザー満足度スコアを<strong>3.2→4.1に向上</strong>させた。
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="text-center mt-8">
+            <Link
+              href="/resume/new"
+              className="inline-block bg-primary text-white px-6 py-2.5 rounded-lg font-semibold hover:bg-primary-dark transition-colors"
+            >
+              自分の経歴もAIで変換してみる
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* Features Section */}
+      <section className="bg-gray-50 py-20 px-4">
         <div className="max-w-6xl mx-auto">
           <h2 className="text-3xl font-bold text-center text-gray-900 mb-4">
             3つのAI機能で転職活動をサポート
@@ -151,7 +221,7 @@ export default function Home() {
       </section>
 
       {/* How it works */}
-      <section className="bg-gray-50 py-20 px-4">
+      <section className="py-20 px-4">
         <div className="max-w-4xl mx-auto">
           <h2 className="text-3xl font-bold text-center text-gray-900 mb-12">
             かんたん3ステップ
@@ -174,20 +244,20 @@ export default function Home() {
       </section>
 
       {/* Comparison Section */}
-      <section className="py-20 px-4">
+      <section className="bg-gray-50 py-20 px-4">
         <div className="max-w-4xl mx-auto">
           <h2 className="text-3xl font-bold text-center text-gray-900 mb-12">
             他のサービスとの違い
           </h2>
 
           <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
+            <table className="w-full text-left border-collapse bg-white rounded-xl overflow-hidden">
               <thead>
                 <tr className="border-b-2 border-gray-200">
                   <th className="py-3 px-4 text-sm font-semibold text-gray-600">
                     比較項目
                   </th>
-                  <th className="py-3 px-4 text-sm font-semibold text-primary">
+                  <th className="py-3 px-4 text-sm font-semibold text-primary bg-primary/5">
                     キャリアAI
                   </th>
                   <th className="py-3 px-4 text-sm font-semibold text-gray-600">
@@ -203,7 +273,7 @@ export default function Home() {
                   <td className="py-3 px-4 font-medium text-gray-700">
                     AI活用
                   </td>
-                  <td className="py-3 px-4 text-primary font-medium">
+                  <td className="py-3 px-4 text-primary font-medium bg-primary/5">
                     転職特化AI
                   </td>
                   <td className="py-3 px-4 text-gray-500">なし</td>
@@ -213,7 +283,7 @@ export default function Home() {
                   <td className="py-3 px-4 font-medium text-gray-700">
                     日本の書式対応
                   </td>
-                  <td className="py-3 px-4 text-primary font-medium">
+                  <td className="py-3 px-4 text-primary font-medium bg-primary/5">
                     完全対応
                   </td>
                   <td className="py-3 px-4 text-gray-500">テンプレのみ</td>
@@ -223,17 +293,17 @@ export default function Home() {
                   <td className="py-3 px-4 font-medium text-gray-700">
                     企業別カスタマイズ
                   </td>
-                  <td className="py-3 px-4 text-primary font-medium">
+                  <td className="py-3 px-4 text-primary font-medium bg-primary/5">
                     自動最適化
                   </td>
                   <td className="py-3 px-4 text-gray-500">手動</td>
                   <td className="py-3 px-4 text-gray-500">手動</td>
                 </tr>
-                <tr className="border-b border-gray-100">
+                <tr>
                   <td className="py-3 px-4 font-medium text-gray-700">
                     月額料金
                   </td>
-                  <td className="py-3 px-4 text-primary font-medium">
+                  <td className="py-3 px-4 text-primary font-medium bg-primary/5">
                     無料〜980円
                   </td>
                   <td className="py-3 px-4 text-gray-500">無料</td>
@@ -241,6 +311,73 @@ export default function Home() {
                 </tr>
               </tbody>
             </table>
+          </div>
+        </div>
+      </section>
+
+      {/* Email Capture Section */}
+      <section className="py-20 px-4">
+        <div className="max-w-2xl mx-auto">
+          <div className="bg-white border border-gray-200 rounded-xl p-8 text-center">
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">
+              転職成功のコツを無料配信
+            </h2>
+            <p className="text-gray-500 mb-6 text-sm">
+              職務経歴書の書き方、面接対策、年収交渉のコツなど、転職に役立つ情報をメールでお届けします。
+            </p>
+            <EmailCapture />
+            <p className="mt-3 text-xs text-gray-400">
+              いつでも配信停止可能です。スパムは送りません。
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* Blog Preview */}
+      <section className="bg-gray-50 py-20 px-4">
+        <div className="max-w-4xl mx-auto">
+          <h2 className="text-3xl font-bold text-center text-gray-900 mb-4">
+            転職お役立ちコラム
+          </h2>
+          <p className="text-center text-gray-500 mb-10">
+            転職のプロが教える書類作成のコツ
+          </p>
+          <div className="grid md:grid-cols-3 gap-6">
+            <Link
+              href="/blog/how-to-write-resume"
+              className="bg-white border border-gray-200 rounded-xl p-5 hover:shadow-md transition-all"
+            >
+              <p className="text-xs text-gray-400 mb-2">2026.04.16</p>
+              <h3 className="text-sm font-semibold text-gray-900 leading-snug">
+                【2026年版】職務経歴書の書き方完全ガイド
+              </h3>
+            </Link>
+            <Link
+              href="/blog/ai-resume-tools-comparison"
+              className="bg-white border border-gray-200 rounded-xl p-5 hover:shadow-md transition-all"
+            >
+              <p className="text-xs text-gray-400 mb-2">2026.04.16</p>
+              <h3 className="text-sm font-semibold text-gray-900 leading-snug">
+                職務経歴書をAIで自動作成｜無料ツール3選を比較
+              </h3>
+            </Link>
+            <Link
+              href="/blog/motivation-letter-tips"
+              className="bg-white border border-gray-200 rounded-xl p-5 hover:shadow-md transition-all"
+            >
+              <p className="text-xs text-gray-400 mb-2">2026.04.16</p>
+              <h3 className="text-sm font-semibold text-gray-900 leading-snug">
+                志望動機が思いつかない？書き方のコツとNG例
+              </h3>
+            </Link>
+          </div>
+          <div className="text-center mt-8">
+            <Link
+              href="/blog"
+              className="text-primary hover:text-primary-dark font-medium text-sm"
+            >
+              コラム一覧を見る &rarr;
+            </Link>
           </div>
         </div>
       </section>
