@@ -4,6 +4,35 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+
+# API キー・環境変数
 .env
+.env.*
+
+# 画像（サンプル以外）
 *.png
 !tools/thumbnail-generator/README.md
+
+# 買取データCSV（ビジネス機密）
+all_data_*.csv
+
+# Claude/VSCode設定（ローカル環境依存）
+.claude/
+.claude/settings.local.json
+settings.local.json
+.vscode/
+
+# ログ・キャッシュ
+*.log
+logs/
+cache_results.json
+ec_cache.json
+price_history.json
+*.tmp
+
+# 認証情報
+client_secrets.json
+token.json
+credentials.json
+*.pem
+*.key

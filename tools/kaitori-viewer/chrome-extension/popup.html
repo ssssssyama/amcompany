@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body { font-family: sans-serif; width: 300px; padding: 12px; margin: 0; }
+    h2 { font-size: 16px; margin: 0 0 8px; }
+    .status { padding: 8px; border-radius: 4px; margin: 8px 0; font-size: 13px; }
+    .ok { background: #e8f5e9; color: #2e7d32; }
+    .err { background: #ffebee; color: #c62828; }
+    .info { font-size: 12px; color: #666; margin-top: 8px; }
+    .settings { margin-top: 10px; padding-top: 10px; border-top: 1px solid #eee; }
+    .settings label { font-size: 13px; display: flex; align-items: center; gap: 6px; cursor: pointer; }
+    button { margin-top: 8px; padding: 6px 12px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h2>買取価格コレクター</h2>
+  <div id="status" class="status">確認中...</div>
+  <div id="count"></div>
+  <div class="info">
+    <p>対応サイト: ビックカメラ、コジマ、ソフマップ、ケーズ、ジョーシン、ノジマ、エディオン、ヨドバシ、Amazon</p>
+    <p>JAN検索URLで商品ページを開くと自動的に価格を取得します</p>
+  </div>
+  <div class="settings">
+    <label>
+      <input type="checkbox" id="autoClose" checked>
+      価格取得後にタブを自動で閉じる
+    </label>
+  </div>
+  <button id="openViewer">Streamlit で確認</button>
+
+  <script>
+    async function checkStatus() {
+      const el = document.getElementById("status");
+      const countEl = document.getElementById("count");
+      try {
+        const resp = await fetch("http://127.0.0.1:8502/status");
+        const data = await resp.json();
+        el.className = "status ok";
+        el.textContent = "サーバー稼働中";
+        countEl.textContent = `キャッシュ: ${data.cache_count}件`;
+      } catch (e) {
+        el.className = "status err";
+        el.textContent = "サーバー未起動";
+        countEl.textContent = "python price_server.py で起動してください";
+      }
+    }
+
+    // 設定の読み込み
+    chrome.storage.local.get({ autoClose: true }, (data) => {
+      document.getElementById("autoClose").checked = data.autoClose;
+    });
+
+    // 設定の保存
+    document.getElementById("autoClose").addEventListener("change", (e) => {
+      chrome.storage.local.set({ autoClose: e.target.checked });
+    });
+
+    document.getElementById("openViewer").addEventListener("click", () => {
+      chrome.tabs.create({ url: "http://localhost:8501" });
+    });
+
+    checkStatus();
+  </script>
+</body>
+</html>

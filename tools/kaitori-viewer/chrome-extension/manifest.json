@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "買取価格コレクター",
+  "version": "1.5",
+  "description": "量販店ECサイトから商品価格を自動取得してローカルサーバーに送信",
+  "permissions": ["activeTab", "tabs", "storage", "alarms"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.biccamera.com/*",
+        "*://*.kojima.net/*",
+        "*://*.sofmap.com/*",
+        "*://*.ksdenki.com/*",
+        "*://joshinweb.jp/*",
+        "*://*.joshinweb.jp/*",
+        "*://online.nojima.co.jp/*",
+        "*://*.edion.com/*",
+        "*://*.yodobashi.com/*",
+        "*://*.amazon.co.jp/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "icons": {}
+}
