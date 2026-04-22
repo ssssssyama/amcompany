@@ -202,4 +202,4 @@ def search(context, jan_code):
 
 if __name__ == "__main__" or not hasattr(sys, "ps1"):
     from _cdp_worker_common import run_worker
-    run_worker(search)
+    run_worker(search, retailer_domain="www.sofmap.com")

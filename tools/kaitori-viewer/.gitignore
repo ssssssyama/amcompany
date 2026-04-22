@@ -1,5 +1,34 @@
 .env
+.env.local
+.env.*.local
 __pycache__/
 *.pyc
+*.pyo
 logs/
 .vscode/
+.idea/
+
+# 認証情報・API キーを含むもの（絶対にコミットしない）
+api_token
+*_state.json
+*_auth_state.json
+favorite_state_*.json
+hikaku_auth_state.json
+hikaku_idb.json
+favorite_added.json
+
+# ランタイム生成ファイル
+cache_results.json
+.kaitori-viewer/
+*.lock
+
+# デバッグ/一時ファイル
+_debug_*.py
+_test_*.py
+_inspect_*.py
+_find_*.py
+*.tmp
+
+# OS
+Thumbs.db
+.DS_Store

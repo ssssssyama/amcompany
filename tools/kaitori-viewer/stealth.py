@@ -235,3 +235,181 @@ def create_cdp_stealth_context(browser, **kwargs):
     context = browser.new_context(**_stealth_defaults(**kwargs))
     context.add_init_script(_CHROMIUM_STEALTH_JS)
     return context
+
+
+# --- アクセス遮断対策: warmup + retry + rate limit ---
+import os as _os
+import random as _random
+import time as _time
+from pathlib import Path as _Path
+from urllib.parse import urlparse as _urlparse
+
+_RATE_LIMIT_FILE = _Path.home() / ".kaitori-viewer" / ".domain_rate_limit.json"
+_MIN_DOMAIN_INTERVAL = 2.0  # 同一ドメインへの最小アクセス間隔（秒）
+
+# Bot検出ページを示すマーカー（タイトル or URL パターン）
+_BLOCKED_MARKERS = (
+    "Human Verification",
+    "Attention Required",
+    "Access Denied",
+    "Error 403",
+    "Bot Challenge",
+    "Are you a robot",
+    "Just a moment",
+    "Checking your browser",
+    "不正アクセス",
+    "ロボット",
+)
+
+# 遮断系ネットワークエラー
+_BLOCKING_ERRORS = (
+    "ERR_HTTP2_PROTOCOL_ERROR",
+    "NS_ERROR_NET_INTERRUPT",
+    "ERR_CONNECTION_RESET",
+    "ERR_CONNECTION_CLOSED",
+    "ERR_CONNECTION_REFUSED",
+    "ERR_EMPTY_RESPONSE",
+    "ERR_FAILED",
+)
+
+
+def _domain_of(url: str) -> str:
+    try:
+        return _urlparse(url).netloc
+    except Exception:
+        return ""
+
+
+def _rate_limit_wait(domain: str) -> None:
+    """同一ドメインへの連続アクセスを間引く（ファイル共有で複数サブプロセス対応）"""
+    if not domain:
+        return
+    try:
+        import json as _json
+        _RATE_LIMIT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        data = {}
+        if _RATE_LIMIT_FILE.exists():
+            try:
+                data = _json.loads(_RATE_LIMIT_FILE.read_text(encoding="utf-8"))
+            except (OSError, _json.JSONDecodeError):
+                data = {}
+        last = float(data.get(domain, 0))
+        now = _time.time()
+        wait = _MIN_DOMAIN_INTERVAL - (now - last)
+        if wait > 0:
+            _time.sleep(wait)
+        data[domain] = _time.time()
+        # 古いエントリは削除（24h超）
+        cutoff = _time.time() - 86400
+        data = {k: v for k, v in data.items() if float(v) > cutoff}
+        _RATE_LIMIT_FILE.write_text(_json.dumps(data), encoding="utf-8")
+    except OSError:
+        pass  # ファイル書き込み失敗でも続行
+
+
+def _is_blocked_page(page) -> bool:
+    """ページが bot検出ページに変遷したかを判定"""
+    try:
+        title = (page.title() or "")
+        if any(m in title for m in _BLOCKED_MARKERS):
+            return True
+        body = (page.text_content("body") or "")[:500]
+        if any(m in body for m in _BLOCKED_MARKERS):
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _is_blocking_error(err_str: str) -> bool:
+    """エラーメッセージが遮断系か判定"""
+    return any(m in err_str for m in _BLOCKING_ERRORS)
+
+
+def safe_goto(
+    page,
+    url: str,
+    warmup_url: str | None = None,
+    wait_until: str = "domcontentloaded",
+    timeout: int = 30000,
+    max_retries: int = 2,
+    post_delay: tuple[float, float] = (2.0, 4.0),
+) -> bool:
+    """Bot遮断対策込みのページ遷移。
+
+    1. 同一ドメインへの連続アクセスを rate limit で間引く
+    2. warmup_url が指定されていれば先にホームページを訪問しcookies確立
+    3. ターゲットURLへ遷移、遮断エラーならバックオフしてリトライ
+    4. ページが bot検出ページに変遷していたら False
+
+    Args:
+        page: Playwright page
+        url: ターゲットURL
+        warmup_url: 事前訪問URL（同ドメインのトップページ推奨）
+        wait_until: goto の wait_until
+        timeout: goto のタイムアウト（ms）
+        max_retries: リトライ回数（0ならリトライなし）
+        post_delay: goto 後のランダム遅延範囲（秒）
+
+    Returns:
+        True=成功（Bot検出ページでもない）, False=失敗
+    """
+    domain = _domain_of(url)
+    _rate_limit_wait(domain)
+
+    # warmup: ホームページ訪問でcookies/session確立
+    if warmup_url and warmup_url != url:
+        try:
+            page.goto(warmup_url, wait_until="domcontentloaded", timeout=timeout)
+            _time.sleep(_random.uniform(1.5, 3.0))
+        except Exception:
+            pass  # warmup失敗でも続行
+
+    last_err = ""
+    for attempt in range(max_retries + 1):
+        try:
+            page.goto(url, wait_until=wait_until, timeout=timeout)
+            # ページ描画を待つ
+            _time.sleep(_random.uniform(*post_delay))
+            # Bot検出ページに変遷していないか確認
+            if _is_blocked_page(page):
+                last_err = "bot detection page"
+                if attempt < max_retries:
+                    _time.sleep(_random.uniform(4.0, 8.0))  # 長めのバックオフ
+                    continue
+                return False
+            return True
+        except Exception as e:
+            last_err = str(e)[:200]
+            if _is_blocking_error(last_err) and attempt < max_retries:
+                _time.sleep(_random.uniform(3.0, 6.0) * (attempt + 1))  # 指数バックオフ
+                continue
+            if attempt >= max_retries:
+                import sys as _sys
+                print(f"safe_goto failed ({url[:80]}): {last_err}", file=_sys.stderr)
+                return False
+    return False
+
+
+def launch_stealth_browser(playwright, prefer: str = "chromium", headless: bool = True):
+    """ステルス設定付きブラウザを起動（fallback付き）
+
+    Args:
+        playwright: sync_playwright コンテキスト
+        prefer: 'chromium' or 'firefox'
+        headless: ヘッドレスモードで起動
+
+    Returns:
+        launched browser. 失敗したら fallback ブラウザを試す
+    """
+    launch_order = [prefer] + (["firefox"] if prefer == "chromium" else ["chromium"])
+    last_err = None
+    for name in launch_order:
+        try:
+            browser_type = getattr(playwright, name)
+            args = ["--disable-blink-features=AutomationControlled"] if name == "chromium" else []
+            return browser_type.launch(headless=headless, args=args, timeout=30000)
+        except Exception as e:
+            last_err = e
+            continue
+    raise last_err or RuntimeError("No browser available")

@@ -37,6 +37,10 @@ EXTENSION_ONLY_RETAILERS = [
     "ノジマ",
     "エディオン",
     "コジマ",
+    "auPAYマーケット",  # Chrome拡張 content.js にルール追加済み、巡回キュー対象
+    "セブンネット",      # 7net.omni7.jp - セブン&アイ系総合EC、ゲーム/家電
+    "フジヤカメラ",      # fujiya-camera.co.jp - カメラ/レンズ専門店（新品）
+    "楽天ブックス",      # books.rakuten.co.jp - 書籍/ゲーム/DVD
     # ソフマップは実ブラウザでもbot検知で「アクセス遮断」画面になるため除外
 ]
 

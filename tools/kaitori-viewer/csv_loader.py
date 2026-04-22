@@ -1,6 +1,38 @@
 """買取価格CSVの読み込みと正規化"""
 
+import json
+from pathlib import Path
+
 import pandas as pd
+
+# 過去利益実績（cache_results.json）の履歴ボーナス
+_PROFITABLE_JANS_CACHE: set[str] | None = None
+
+
+def _load_profitable_jans() -> set[str]:
+    """過去に利益が出たJANをcache_results.jsonから読み込む（1回のみ）"""
+    global _PROFITABLE_JANS_CACHE
+    if _PROFITABLE_JANS_CACHE is not None:
+        return _PROFITABLE_JANS_CACHE
+
+    cache_file = Path.home() / ".kaitori-viewer" / "cache_results.json"
+    jans: set[str] = set()
+    if cache_file.exists():
+        try:
+            data = json.loads(cache_file.read_text(encoding="utf-8"))
+            for r in data:
+                if r.get("現金利益", 0) > 0 and r.get("JAN"):
+                    jans.add(str(r["JAN"]))
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    _PROFITABLE_JANS_CACHE = jans
+    return jans
+
+
+def _history_bonus(jan: str) -> float:
+    """過去利益実績ボーナス（過去に利益が出たJANは1.5倍）"""
+    return 1.5 if jan in _load_profitable_jans() else 1.0
 
 SHOP_CONFIGS = [
     {"prefix": "アバウテック", "name_col": 1, "price_col": 2, "date_col": 3, "cat_col": 4,
@@ -35,9 +67,58 @@ SHOP_NAMES = [s["prefix"] for s in SHOP_CONFIGS]
 
 # 除外フィルタ
 EXCLUDED_PRODUCTS = ["iPhone", "アイフォン", "iPad", "アイパッド"]
-EXCLUDED_CONDITIONS = [
+# 状態不良（真の除外対象）
+_BAD_CONDITIONS = [
     "汚れ", "破損", "ジャンク", "訳あり", "難あり", "故障", "欠品", "傷あり", "中古",
+]
+# 生産終了マーカー（戦略T: 除外ではなく希少化シグナルとして扱う）
+_DISCONTINUED_MARKERS = [
     "販売終了", "販売中止", "販売休止", "生産終了", "廃番", "生産完了",
+]
+# 後方互換性のため旧定数を残す（is_excluded では BAD のみ使用）
+EXCLUDED_CONDITIONS = _BAD_CONDITIONS + _DISCONTINUED_MARKERS
+
+# 大型商品キーワード（送料高額・返品困難・倉庫スペース必要なため仕入対象外）
+# 誤検出回避のため、部分一致しやすい短いキーワード（「机」「デスク」「棚」等）は
+# 具体的な複合語のみを採用する（「デスクトップパソコン」を誤って除外しないため）
+_OVERSIZED_KEYWORDS = [
+    # 大型家電
+    "冷蔵庫", "冷凍庫", "洗濯機", "衣類乾燥機", "洗濯乾燥機",
+    "食洗機", "食器洗い機", "食器乾燥機",
+    "エアコン", "業務用エアコン", "ルームエアコン",
+    "加湿空気清浄機",  # 「空気清浄機」単独は小型あり除外せず
+    # 大型キッチン家電
+    "オーブンレンジ", "ビルトイン", "システムキッチン", "ガスレンジ",
+    "IHクッキングヒーター", "業務用",
+    # 大型テレビ（インチ数で判定、50型以上）
+    "50インチ", "50型", "55インチ", "55型", "60インチ", "60型",
+    "65インチ", "65型", "70インチ", "70型", "75インチ", "75型",
+    "80インチ", "80型", "85インチ", "85型", "100インチ", "100型",
+    "110インチ", "110型", "大型テレビ",
+    # 家具（具体的な複合語のみ、単独「机」「デスク」「棚」「ベッド」は誤検出回避）
+    "ソファー", "ソファベッド",
+    "ダブルベッド", "シングルベッド", "セミダブルベッド", "クイーンベッド",
+    "マットレス",
+    "学習机", "オフィスデスク", "作業机", "事務デスク",
+    "食器棚", "本棚", "タンス", "洋服タンス", "チェスト",
+    "ダイニングテーブル", "ダイニングセット",
+    # 楽器（大型）
+    "グランドピアノ", "アップライトピアノ", "電子ピアノ",
+    "ドラムセット", "電子ドラム",
+    # アウトドア・車両
+    "自転車", "電動自転車", "原付", "オートバイ", "スクーター",
+    "芝刈り機", "除雪機", "雪かき機",
+    "発電機", "船外機", "耕運機", "耕うん機",
+    "自動車", "モペット",
+    # その他大型
+    "マッサージチェア", "リクライニングチェア",
+    "給湯器", "エコキュート", "ガス給湯器",
+    "サウナ", "バスタブ",
+    "大型金庫",
+    "コピー機", "複合機", "業務用プリンター",
+    "自動販売機",
+    # 店舗設備
+    "ショーケース", "陳列棚", "レジスター",
 ]
 
 
@@ -45,20 +126,44 @@ CARD_GAME_CATEGORIES = ["トレーディングカード"]
 CARD_GAME_BOX_KEYWORDS = ["ボックス", "BOX", "box", "Box"]
 
 
-def is_excluded(product_name: str, category: str = "") -> bool:
-    """商品名が除外対象かどうかを判定する"""
+def is_oversized(product_name: str, category: str = "") -> bool:
+    """大型商品（送料高額・返品困難）かどうかを判定する"""
+    if not product_name and not category:
+        return False
+    haystack = f"{product_name} {category}"
+    return any(kw in haystack for kw in _OVERSIZED_KEYWORDS)
+
+
+def is_excluded(product_name: str, category: str = "", exclude_oversized: bool = True) -> bool:
+    """商品名が除外対象かどうかを判定する。
+
+    Args:
+        product_name: 商品名
+        category: カテゴリ名
+        exclude_oversized: 大型商品も除外するか（デフォルト True、仕入対象外）
+    """
     name_lower = product_name.lower()
     for word in EXCLUDED_PRODUCTS:
         if word.lower() in name_lower:
             return True
-    for word in EXCLUDED_CONDITIONS:
+    for word in _BAD_CONDITIONS:
         if word in product_name:
             return True
     # カードゲームはボックス以外を除外
     if any(cat in category for cat in CARD_GAME_CATEGORIES):
         if not any(kw.lower() in name_lower for kw in CARD_GAME_BOX_KEYWORDS):
             return True
+    # 大型商品除外（送料・倉庫・返品リスクのため）
+    if exclude_oversized and is_oversized(product_name, category):
+        return True
     return False
+
+
+def is_discontinued(product_name: str) -> bool:
+    """生産終了・販売終了マーカーを含むか（戦略T: 希少化シグナル）"""
+    if not product_name:
+        return False
+    return any(m in product_name for m in _DISCONTINUED_MARKERS)
 
 
 def load_csv(filepath: str) -> pd.DataFrame:
@@ -126,16 +231,41 @@ def load_csv(filepath: str) -> pd.DataFrame:
                     product_name = sp["name"]
                     break
 
-        # 利益候補スコア算出
+        # 利益候補スコア算出（戦略A+D: 買取店間価格差 + 履歴ボーナス）
         all_prices = sorted(
             [sp["price"] for sp in shop_prices.values()],
             reverse=True,
         )
         second_price = all_prices[1] if len(all_prices) >= 2 else 0
-        price_gap = best_price - second_price  # 最高値と2番目の差
+        price_gap = best_price - second_price
         shop_count = len(shop_prices)
-        # スコア = 買取価格 × 買取店数 ÷ (価格差 + 1)
-        profit_score = round(best_price * shop_count / (price_gap + 1))
+
+        # === 外れ値検出: 最高値が 2位/中央値から極端に乖離していないか ===
+        # 家電市場のように1店舗だけ高い提示で実際は買取されないケース対策。
+        # 信頼買取価格 (reliable_price) は保守的な見積で、実際の利益判定に使える。
+        # - 最高値が2位の1.18倍超 かつ 3店舗以上ある場合は外れ値疑い
+        # - そのときは 2位価格を信頼価格として採用
+        is_outlier_best = False
+        reliable_price = best_price
+        if shop_count >= 3 and second_price > 0:
+            outlier_ratio = best_price / second_price
+            if outlier_ratio >= 1.18:
+                is_outlier_best = True
+                reliable_price = second_price
+
+        # 戦略D: 買取店間価格差を「プラス評価」に反転
+        # 1店舗だけ突出 = 情報の非対称性 = 狙い目
+        gap_score = price_gap * shop_count if shop_count >= 2 else shop_count
+
+        # 戦略A: 過去利益実績ボーナス
+        bonus = _history_bonus(jan)
+
+        # 新スコア = 買取価格 × gap_score × ボーナス / 1000
+        # gap_score=0 時は買取価格×店舗数だけでもスコアが出るようにフォールバック
+        if gap_score > 0:
+            profit_score = round(best_price * gap_score * bonus / 1000)
+        else:
+            profit_score = round(best_price * shop_count * bonus / 1000)
 
         # 買取確認リンク: CSV内リンク > 検索URLテンプレート
         kaitori_url = best_link
@@ -143,6 +273,11 @@ def load_csv(filepath: str) -> pd.DataFrame:
             search_tmpl = SHOP_SEARCH_URLS.get(best_shop, "")
             if search_tmpl:
                 kaitori_url = search_tmpl.replace("{JAN}", jan)
+
+        # 戦略T: 商品名または各店舗の商品名のいずれかに生産終了マーカーがあれば True
+        discontinued = is_discontinued(product_name) or any(
+            is_discontinued(sp.get("name", "")) for sp in shop_prices.values()
+        )
 
         records.append({
             "JAN": jan,
@@ -153,7 +288,10 @@ def load_csv(filepath: str) -> pd.DataFrame:
             "カテゴリ": "、".join(sorted(categories)) if categories else "",
             "買取店数": shop_count,
             "2番目価格": second_price,
+            "信頼買取価格": reliable_price,  # 外れ値を補正した保守的価格
+            "最高値_外れ値": is_outlier_best,
             "利益候補スコア": profit_score,
+            "生産終了": discontinued,
             **{f"{name}_価格": shop_prices.get(name, {}).get("price", 0) for name in SHOP_NAMES},
         })
 

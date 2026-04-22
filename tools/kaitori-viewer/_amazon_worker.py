@@ -120,16 +120,24 @@ def _verify_product_page(context, candidate):
 
 try:
     from playwright.sync_api import sync_playwright
-    from stealth import create_stealth_context
+    from stealth import create_stealth_context, safe_goto
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, timeout=15000)
         try:
             context = create_stealth_context(browser)
             page = context.new_page()
-            page.goto(f"https://www.amazon.co.jp/s?k={jan_code}&condition=new", timeout=15000)
-            page.wait_for_load_state("domcontentloaded", timeout=10000)
-            time.sleep(random.uniform(1.5, 3.5))
+            _url = f"https://www.amazon.co.jp/s?k={jan_code}&condition=new"
+            _ok = safe_goto(
+                page, _url,
+                warmup_url="https://www.amazon.co.jp/",
+                timeout=15000, max_retries=1,
+                post_delay=(1.5, 3.5),
+            )
+            if not _ok:
+                print("null")
+                browser.close()
+                sys.exit(0)
 
             items = page.query_selector_all('[data-component-type="s-search-result"]')
 

@@ -45,13 +45,14 @@ def _get_with_retry(url: str, params: dict, headers: dict | None = None) -> requ
             return None
     return None
 
-RAKUTEN_SEARCH_URL = "https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20220601"
-RAKUTEN_HEADERS = {
-    "Referer": "https://github.com/",
-    "Origin": "https://github.com",
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    "Accept": "application/json",
-}
+# sale_finder から新形式認証対応のエンドポイント・ヘルパーを再利用
+# 新形式UUID + accessKey + 登録URL Referer に対応
+from sale_finder import (
+    RAKUTEN_SEARCH_URL,
+    _build_rakuten_params as _build_rakuten_params_ext,
+    _build_rakuten_headers as _build_rakuten_headers_ext,
+)
+RAKUTEN_HEADERS = _build_rakuten_headers_ext()
 YAHOO_SEARCH_URL = "https://shopping.yahooapis.jp/ShoppingWebService/V3/itemSearch"
 
 RAKUTEN_POINT_RATE = 0.01
@@ -170,18 +171,18 @@ def _is_likely_accessory(csv_name: str, ec_name: str) -> bool:
 
 _SCRAPER_SOURCES = {
     "Amazon", "ヨドバシ", "価格.com", "Qoo10",
+    "ツクモ",     # JAN直URL方式、実機検証済み
+    "駿河屋",     # 新品のみ、中古厳格除外
+    # ドスパラ・パソコン工房・マップカメラ・キタムラ は一時無効化（誤検出リスクあり）
     "ビックカメラ", "ジョーシン", "ノジマ", "ケーズデンキ",
     "ソフマップ", "エディオン", "コジマ",
+    "auPAYマーケット", "セブンネット", "フジヤカメラ", "楽天ブックス",  # Chrome拡張巡回
+    "サウンドハウス", "e☆イヤホン", "ムラウチ",  # Chrome拡張巡回（直接スクレイピング不可）
 }
-_SUSPICIOUS_PRICE_RATIO = 0.25  # EC価格が買取価格の25%以下 → 除外
+# 価格比率チェックは filters.py に集約
+from filters import is_suspicious_price_ratio as _is_suspicious_price_ratio
 _HIGH_PROFIT_RATIO = 0.50  # EC価格が買取価格の50%以下 → 警告（利益が極端に高い）
-
-
-def _is_suspicious_price_ratio(kaitori_price: int, ec_price: int) -> bool:
-    """EC価格が買取価格に対して極端に安い場合、アクセサリ誤マッチの疑いあり（除外用）"""
-    if kaitori_price <= 0 or ec_price <= 0:
-        return False
-    return ec_price / kaitori_price < _SUSPICIOUS_PRICE_RATIO
+_ABSOLUTE_PROFIT_CAP = 100_000
 
 
 def _is_high_profit_ratio(kaitori_price: int, ec_price: int) -> bool:
@@ -191,14 +192,96 @@ def _is_high_profit_ratio(kaitori_price: int, ec_price: int) -> bool:
     return ec_price / kaitori_price < _HIGH_PROFIT_RATIO
 
 
+# BOX vs パック/単品カード判定用パターン
+# 注意: 「Xbox」に「BOX」が含まれるため単純な in 判定だと誤検出する。
+# _has_box_indicator() で単語境界を意識してマッチさせる。
+_BOX_INDICATOR_PATTERN = _re.compile(
+    r"(?:^|[\s　\[【「『・(（])(?:BOX|Box|box|ボックス)(?=[\s　\]】」』・)）]|$)"
+)
+
+
+def _has_box_indicator(name: str) -> bool:
+    """商品名にBOX表記が含まれるか（「Xbox」の誤検出を回避）"""
+    if not name:
+        return False
+    return bool(_BOX_INDICATOR_PATTERN.search(name))
+
+
+# 後方互換のため残す（_is_box_vs_pack_mismatch 以外で参照されていないが）
+_BOX_INDICATORS = ["ボックス"]
+_PACK_INDICATORS = [
+    "1パック", "1Pack", "1pack", "1PACK",
+    "シングル", "single", "Single", "SINGLE",
+    "バラ売り", "ばら売り", "ばらうり",
+    "ランダム1パック", "サーチ済み", "未開封パック",
+]
+_PACK_COUNT_PATTERN = _re.compile(r"(\d{1,2})\s*(?:パック|pack|PACK|枚入)")
+# トレカ単品販売のパターン（カード番号コード）
+_CARD_CODE_PATTERNS = [
+    _re.compile(r"(?:PK[-_]|SK[-_])?[A-Za-z]{1,4}\d{1,3}[a-z]{0,2}[-_]\d{2,4}"),  # PK-sv1s-070
+    _re.compile(r"\b(?:PSA|BGS|CGC|ARS)\s*\d+", _re.IGNORECASE),  # 鑑定品
+    _re.compile(r"[ur]{1,2}\s*\d{3}/\d{3}", _re.IGNORECASE),  # コレクション番号
+]
+# ポケモン単品カード名（BOXではない単品判定）
+_SINGLE_CARD_NAMES = [
+    "ネストボール", "ハイパーボール", "モンスターボール", "スーパーボール",
+    "クイックボール", "マスターボール", "ヒスイのヘビーボール",
+    "博士の研究", "マリィ", "ボスの指令", "ナンジャモ", "アクロマ",
+    "基本炎エネルギー", "基本水エネルギー", "基本雷エネルギー",
+]
+
+
+def _has_card_single_marker(name: str) -> bool:
+    """EC商品名がトレカ単品の特徴を持つか判定"""
+    if not name:
+        return False
+    for pat in _CARD_CODE_PATTERNS:
+        if pat.search(name):
+            return True
+    has_single_card = any(kw in name for kw in _SINGLE_CARD_NAMES)
+    if has_single_card and not _has_box_indicator(name):
+        return True
+    return False
+
+
+def _is_box_vs_pack_mismatch(csv_name: str, ec_name: str) -> bool:
+    """買取はBOXなのにECがパック売り or カード単品という不一致を検出"""
+    if not csv_name or not ec_name:
+        return False
+    if not _has_box_indicator(csv_name):
+        return False  # 買取がBOXでなければ判定外
+
+    # EC名にパック単位売りのキーワード
+    if any(kw in ec_name for kw in _PACK_INDICATORS):
+        return True
+    # カード番号コード or 単品トレーナー/エネルギーカード名
+    if _has_card_single_marker(ec_name):
+        return True
+    # 「30パック」のような大箱表記なら BOX 相当でOK
+    m = _PACK_COUNT_PATTERN.search(ec_name)
+    if m:
+        n = int(m.group(1))
+        if n < 10:
+            return True
+    # ECにBOXキーワードが無く「パック」だけ出る場合もパック売り疑い
+    if "パック" in ec_name and not _has_box_indicator(ec_name):
+        return True
+    return False
+
+
 def _is_name_mismatch(csv_name: str, ec_name: str) -> bool:
     """買取商品名とEC商品名が明らかに異なるかを判定する
 
-    1. アクセサリ判定
-    2. 数値スペックの一致率で判定
+    1. BOX vs パック/単品カード判定（最優先）
+    2. アクセサリ判定
+    3. 数値スペックの一致率で判定
     """
     if not csv_name or not ec_name:
         return False
+
+    # BOX vs パック/単品カード判定（最優先）
+    if _is_box_vs_pack_mismatch(csv_name, ec_name):
+        return True
 
     # アクセサリ判定
     if _is_likely_accessory(csv_name, ec_name):
@@ -225,17 +308,17 @@ def _is_name_mismatch(csv_name: str, ec_name: str) -> bool:
 
 def search_rakuten_by_jan(jan_code: str) -> dict | None:
     """楽天でJAN検索し、最安値を返す"""
-    if not RAKUTEN_APP_ID or not RAKUTEN_ACCESS_KEY:
+    from sale_finder import _RAKUTEN_VALID
+    if not _RAKUTEN_VALID:
         return None
 
-    params = {
-        "applicationId": RAKUTEN_APP_ID,
-        "accessKey": RAKUTEN_ACCESS_KEY,
+    # 新旧形式を自動判定（sale_finder._build_rakuten_params で accessKey を自動付与）
+    params = _build_rakuten_params_ext({
         "keyword": jan_code,
         "hits": 5,
         "sort": "+itemPrice",
         "availability": 1,
-    }
+    })
 
     resp = _get_with_retry(RAKUTEN_SEARCH_URL, params, RAKUTEN_HEADERS)
     if not resp:
@@ -264,12 +347,21 @@ def search_rakuten_by_jan(jan_code: str) -> dict | None:
             # postageFlag: 0=送料別, 1=送料込, 2=送料無料
             postage_flag = item_data.get("postageFlag", 0)
             free_shipping = postage_flag in (1, 2)
+            # 戦略H: pointRate (1=1倍, 5=5倍, 10=10倍...) を取得
+            point_rate = item_data.get("pointRate", 1) or 1
+            # 戦略K: 商品名から在庫数抽出
+            from _worker_common import extract_stock_number
+            stock_count = extract_stock_number(name)
             entry = {
                 "name": name,
                 "price": price,
                 "shop": item_data.get("shopName", ""),
                 "url": item_data.get("itemUrl", ""),
-                "points": int(price * RAKUTEN_POINT_RATE),
+                "points": int(price * point_rate * RAKUTEN_POINT_RATE),
+                "point_rate": point_rate,
+                "release_date": item_data.get("releaseDate", ""),
+                "review_count": int(item_data.get("reviewCount", 0) or 0),
+                "stock_count": stock_count,
                 "source": "楽天",
                 "stock_status": "in_stock",
             }
@@ -309,6 +401,11 @@ def search_yahoo_by_jan(jan_code: str) -> dict | None:
             premium_bonus = point_info.get("premiumBonusAmount", 0) or 0
             base_point = int(price * 0.01)
             total_points = base_point + bonus + premium_bonus
+            # 戦略H: ポイント倍率を逆算
+            point_rate = round(total_points / price * 100, 1) if price > 0 else 1
+            # 戦略K: 在庫数抽出
+            from _worker_common import extract_stock_number
+            stock_count = extract_stock_number(item_name)
 
             # shipping: "free"=送料無料, 数値=送料額
             shipping_info = item.get("shipping", {})
@@ -319,6 +416,9 @@ def search_yahoo_by_jan(jan_code: str) -> dict | None:
                 "shop": item.get("seller", {}).get("name", ""),
                 "url": item.get("url", ""),
                 "points": total_points,
+                "point_rate": point_rate,
+                "review_count": int(item.get("review", {}).get("count", 0) or 0),
+                "stock_count": stock_count,
                 "source": "Yahoo",
                 "stock_status": "in_stock",
             }
@@ -359,12 +459,20 @@ def _rate_limited_yahoo(jan_code: str) -> dict | None:
     return search_yahoo_by_jan(jan_code)
 
 
-def _verify_api_result(result: dict) -> dict | None:
+def _verify_api_result(result: dict, kaitori_price: int = 0) -> dict | None:
     """API結果（楽天/Yahoo）の商品ページを訪問して検証する
 
     検証OKなら商品ページの実価格で更新した結果を返す。
     検証NG（除外条件該当・在庫切れ・価格乖離）なら None を返す。
+
+    Args:
+        result: API検索結果
+        kaitori_price: 買取価格。与えられた場合、実ページ価格を採用する直前に
+                       filters.is_suspicious_price_ratio で再チェックし、
+                       疑わしい比率なら None を返す（Galaxy S25 Ultra sokutei
+                       59,800円バグ対策）。
     """
+    from filters import is_suspicious_price_ratio as _is_sus
     url = result.get("url", "")
     if not url:
         return None
@@ -386,12 +494,56 @@ def _verify_api_result(result: dict) -> dict | None:
         logger.info("API検証: 在庫切れ %s", result.get("name", "")[:40])
         return None
 
+    # 在庫ステータス unknown: ページで在庫表記が取れなかったケース
+    # API が返した "in_stock" を信用せず、警告フラグを付けて次回再チェックを促す
+    if verified.get("stock_status") == "unknown":
+        logger.debug("API検証: 在庫状況不明 (unknownフラグ) %s", result.get("name", "")[:40])
+        # 処理は継続するが、price_warning を立てて TTL を短縮する
+
     # 価格整合性チェック
     page_price = verified.get("price")
+    api_price = result.get("price", 0)
+
     if page_price and verified.get("price_consistent") is False:
         logger.info("API検証: 価格乖離 API=%s 実=%s %s",
-                     result.get("price"), page_price, result.get("name", "")[:40])
+                     api_price, page_price, result.get("name", "")[:40])
+        # 大きな乖離（1.2倍以上 or 0.83倍以下）はAPI価格が古い可能性が高いので
+        # 実ページ価格を採用 + 警告フラグを立てる
+        if api_price > 0 and (page_price / api_price >= 1.2 or page_price / api_price <= 0.83):
+            # ★重要: 実ページ価格を採用する前に suspicious ratio 再チェック
+            # （楽天ショップの JAN 流用 — sokutei/noah-shopping 等 — で
+            #  実ページ価格を信用して採用すると filter をすり抜けるバグ対策）
+            if kaitori_price > 0 and _is_sus(kaitori_price, page_price):
+                logger.warning(
+                    "[verify] 実ページ価格 %s円が買取 %s円に対し疑わしい比率 → 採用却下",
+                    f"{page_price:,}", f"{kaitori_price:,}",
+                )
+                return None
+            updated = dict(result)
+            updated["price"] = page_price
+            updated["verified"] = True
+            updated["price_warning"] = True
+            if verified.get("stock_status") != "unknown":
+                updated["stock_status"] = verified["stock_status"]
+            if verified.get("name"):
+                updated["name"] = verified["name"]
+            if verified.get("url"):
+                updated["url"] = verified["url"]
+            logger.info("API検証: 実ページ価格を採用 %s → %s", api_price, page_price)
+            return updated
         return None
+
+    # page_price が取れなかった場合: API価格をそのまま使うのは危険
+    # 検証失敗扱いにして警告フラグを立てる
+    if not page_price and api_price > 0:
+        logger.info("API検証: ページ価格抽出失敗、API価格に警告 %s %s円",
+                     result.get("source"), api_price)
+        updated = dict(result)
+        updated["verified"] = False
+        updated["price_warning"] = True
+        if verified.get("stock_status") != "unknown":
+            updated["stock_status"] = verified["stock_status"]
+        return updated
 
     # 検証OKの場合、実ページの情報で結果を更新
     updated = dict(result)
@@ -399,12 +551,19 @@ def _verify_api_result(result: dict) -> dict | None:
         updated["price"] = page_price
     if verified.get("stock_status") != "unknown":
         updated["stock_status"] = verified["stock_status"]
+    else:
+        # stock_status 不明: API の "in_stock" を信用せず警告フラグを立てる
+        # → TTL 短縮で次回検索時に再チェックされる
+        updated["price_warning"] = True
     if verified.get("name"):
         updated["name"] = verified["name"]
     if verified.get("points"):
         updated["points"] = verified["points"]
     if verified.get("url"):
         updated["url"] = verified["url"]
+    # 定価（MSRP）をEC結果に引き継ぐ（プレミア化判定に使う）
+    if verified.get("msrp"):
+        updated["msrp"] = verified["msrp"]
     updated["verified"] = True
     return updated
 
@@ -479,22 +638,29 @@ def search_best_ec_price(
     # 価格比率フィルタ: 全ソース（API + スクレイパー）に適用
     # ヨドバシ等のスクレイパーも商品名検索のため、アクセサリが最安値でヒットする場合がある
     # 例: FUJIFILM X100VI(買取293,300円) → レンズフィルター(2,790円)
+    # 楽天ショップの JAN 流用（MacBook Pro 358,000円 → sokutei 59,800円）も同パターン
     if kaitori_price > 0:
         normal = [c for c in candidates if not _is_suspicious_price_ratio(kaitori_price, c["price"])]
 
         if normal:
             candidates = normal
         else:
-            # 全て疑わしい → 最も高い（=本体に近い）結果を警告付きで返す
-            best = max(candidates, key=lambda x: x["price"])
-            best["price_warning"] = True
-            return best
+            # 全候補が価格比率で疑わしい → このJANは安全に判定できないためスキップ
+            # （以前は max を warning 付きで返していたが、キャッシュに誤データが
+            #  紛れ込むため None を返す方式に変更。利益候補の精度を優先）
+            logger.info(
+                "[price_ratio] 全候補(%d件)が疑わしい比率 → スキップ: JAN関連最低価格=%s円 買取=%s円",
+                len(candidates),
+                f"{min(c.get('price', 0) for c in candidates):,}",
+                f"{kaitori_price:,}",
+            )
+            return None
 
     best = min(candidates, key=lambda x: x["price"])
 
     # API結果（楽天/Yahoo）は商品ページ検証が必要
     if best.get("source") not in _SCRAPER_SOURCES and best.get("url"):
-        verified = _verify_api_result(best)
+        verified = _verify_api_result(best, kaitori_price=kaitori_price)
         if verified:
             best = verified
         else:
@@ -510,6 +676,30 @@ def search_best_ec_price(
     if kaitori_price > 0 and best.get("source") not in _SCRAPER_SOURCES:
         if _is_high_profit_ratio(kaitori_price, best["price"]):
             best["price_warning"] = True
+
+    # C. 並列予備候補: bestが売り切れたときの代替店舗を最大4件保持
+    # 同一ソースでも複数ショップを候補として残す（bestと同じショップは除く）
+    best_url = best.get("url", "")
+    best_shop = best.get("shop", "")
+    backups = []
+    for c in sorted(candidates, key=lambda x: x.get("price", 999999999)):
+        if c.get("url") == best_url:
+            continue  # 同じ商品は除く
+        if c.get("shop") == best_shop and c.get("source") == best.get("source"):
+            continue  # 同一ショップは除く
+        if c.get("stock_status") == "out_of_stock":
+            continue  # 既に在庫切れと分かっているものは除く
+        backups.append({
+            "price": c.get("price"),
+            "shop": c.get("shop", ""),
+            "source": c.get("source", ""),
+            "url": c.get("url", ""),
+            "stock_status": c.get("stock_status", "unknown"),
+        })
+        if len(backups) >= 4:
+            break
+    if backups:
+        best["backup_shops"] = backups
 
     return best
 

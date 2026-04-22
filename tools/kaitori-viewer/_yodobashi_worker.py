@@ -117,8 +117,10 @@ def _verify_product_page(context, candidate):
         page_price = None
 
         # 方法1: 専用セレクタから取得（ポイント表示を避ける）
-        for price_sel in ["#js_scl_priceBox", ".pInfo .red", ".productPrice",
-                          ".price .num", "[class*='Price'] .num"]:
+        # `.pInfo .red` は関連商品・過去価格など販売価格以外が入ることがあるため最後にする
+        for price_sel in ["#js_scl_priceBox", ".productPrice",
+                          ".price .num", "[class*='Price'] .num",
+                          ".pInfo .red"]:
             price_el = page.query_selector(price_sel)
             if price_el:
                 extracted = extract_selling_price(price_el.text_content())

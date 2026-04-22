@@ -17,7 +17,7 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
 
 from _worker_common import (
-    extract_selling_price, human_delay, human_like_goto,
+    extract_msrp, extract_selling_price, human_delay, human_like_goto,
     is_accessory, is_used_or_excluded, verify_price_consistency,
 )
 
@@ -90,9 +90,13 @@ try:
                 if pt_abs:
                     points = int(pt_abs.group(1).replace(",", ""))
 
+            # 定価 (MSRP) 抽出: プレミア化検出 (買取 > 定価) に使う
+            msrp = extract_msrp(page_text)
+
             result = {
                 "excluded": False,
                 "price": page_price,
+                "msrp": msrp,
                 "stock_status": stock_status,
                 "name": title[:120] if title else "",
                 "points": points,
